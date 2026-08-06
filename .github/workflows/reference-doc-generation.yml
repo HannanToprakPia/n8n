@@ -47,6 +47,9 @@ jobs:
           path: workspace/component-source
           fetch-depth: 1
 
+      # ---------------------------------------------------------
+      # 2. Verify checkout
+      # ---------------------------------------------------------
       - name: Verify component checkout
         shell: bash
         run: |
@@ -54,6 +57,7 @@ jobs:
 
           if [ ! -d "$COMPONENT_PATH/.git" ]; then
             echo "Component repository checkout failed."
+            echo "Expected repository path: $COMPONENT_PATH"
             exit 1
           fi
 
@@ -62,8 +66,16 @@ jobs:
           echo "Branch: ${{ inputs.source_branch }}"
           echo "Commit SHA: $(git -C "$COMPONENT_PATH" rev-parse HEAD)"
 
+          echo
+          echo "Repository root files:"
+          find "$COMPONENT_PATH" \
+            -maxdepth 1 \
+            -type f \
+            -print \
+            | sort
+
       # ---------------------------------------------------------
-      # 2. Prepare workspace
+      # 3. Prepare output workspace
       # ---------------------------------------------------------
       - name: Prepare SDS workspace
         shell: bash
@@ -72,11 +84,15 @@ jobs:
 
           mkdir -p "$SDS_OUTPUT_PATH"
 
-          echo "Workspace:"
-          find workspace -maxdepth 2 -type d -print | sort
+          echo "Workspace directories:"
+          find workspace \
+            -maxdepth 2 \
+            -type d \
+            -print \
+            | sort
 
       # ---------------------------------------------------------
-      # 3. Test Ollama Cloud authentication and model access
+      # 4. Test Ollama Cloud API key and model
       # ---------------------------------------------------------
       - name: Test Ollama Cloud
         shell: bash
@@ -86,7 +102,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${OLLAMA_API_KEY:-}" ]; then
-            echo "OLLAMA_API_KEY secret is missing."
+            echo "OLLAMA_API_KEY repository secret is missing."
             exit 1
           fi
 
@@ -94,7 +110,7 @@ jobs:
             curl \
               --silent \
               --show-error \
-              --output /tmp/ollama-response.json \
+              --output /tmp/ollama-test-response.json \
               --write-out "%{http_code}" \
               "https://ollama.com/api/chat" \
               -H "Authorization: Bearer $OLLAMA_API_KEY" \
@@ -112,30 +128,54 @@ jobs:
           )"
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "Ollama Cloud test failed with HTTP $HTTP_CODE."
-            cat /tmp/ollama-response.json || true
+            echo "Ollama Cloud test failed."
+            echo "HTTP status: $HTTP_CODE"
+
+            echo
+            echo "Response:"
+            cat /tmp/ollama-test-response.json || true
+
             exit 1
           fi
 
-          echo "Ollama Cloud authentication succeeded."
+          echo "Ollama Cloud connection succeeded."
           echo "Model: $OLLAMA_MODEL"
 
       # ---------------------------------------------------------
-      # 4. Install OpenCode
+      # 5. Setup Node.js
+      # ---------------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # ---------------------------------------------------------
+      # 6. Install OpenCode through npm
       # ---------------------------------------------------------
       - name: Install OpenCode
         shell: bash
         run: |
           set -euo pipefail
 
-          curl -fsSL https://opencode.ai/install | bash
+          npm install --global opencode-ai@latest
 
-          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          if ! command -v opencode > /dev/null 2>&1; then
+            echo "OpenCode installation failed."
+            echo "Global npm binaries:"
+            npm bin --global || true
+            exit 1
+          fi
 
-          "$HOME/.opencode/bin/opencode" --version
+          echo "OpenCode executable:"
+          command -v opencode
+
+          echo
+          echo "OpenCode version:"
+          opencode --version
 
       # ---------------------------------------------------------
-      # 5. Configure OpenCode for Ollama Cloud
+      # 7. Configure OpenCode for Ollama Cloud
       # ---------------------------------------------------------
       - name: Configure OpenCode for Ollama Cloud
         shell: bash
@@ -144,9 +184,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p "$HOME/.config/opencode"
+          CONFIG_DIR="$HOME/.config/opencode"
+          CONFIG_FILE="$CONFIG_DIR/opencode.json"
 
-          cat > "$HOME/.config/opencode/opencode.json" <<'EOF'
+          mkdir -p "$CONFIG_DIR"
+
+          cat > "$CONFIG_FILE" <<'EOF'
           {
             "$schema": "https://opencode.ai/config.json",
             "model": "ollama-cloud/gemma4:31b",
@@ -156,10 +199,7 @@ jobs:
                 "name": "Ollama Cloud",
                 "options": {
                   "baseURL": "https://ollama.com/v1",
-                  "apiKey": "{env:OLLAMA_API_KEY}",
-                  "headers": {
-                    "Authorization": "Bearer {env:OLLAMA_API_KEY}"
-                  }
+                  "apiKey": "{env:OLLAMA_API_KEY}"
                 },
                 "models": {
                   "gemma4:31b": {
@@ -175,16 +215,17 @@ jobs:
           }
           EOF
 
-          echo "OpenCode provider configuration created."
-          echo "Selected model: ollama-cloud/$OLLAMA_MODEL"
+          python -m json.tool "$CONFIG_FILE" > /dev/null
 
-          # API key'i loglamadan config yapısını kontrol et.
-          python -m json.tool \
-            "$HOME/.config/opencode/opencode.json" \
-            > /dev/null
+          echo "OpenCode configuration created:"
+          echo "$CONFIG_FILE"
+
+          echo
+          echo "Configured model:"
+          echo "ollama-cloud/$OLLAMA_MODEL"
 
       # ---------------------------------------------------------
-      # 6. SDS-RE source scan
+      # 8. Run SDS source scan
       # ---------------------------------------------------------
       - name: SDS-RE scan source
         shell: bash
@@ -193,13 +234,26 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Running SDS source scan..."
+          echo "Component path: $COMPONENT_PATH"
+          echo "Output path: $SDS_OUTPUT_PATH"
+          echo "Model: ollama-cloud/$OLLAMA_MODEL"
+
           opencode run \
             "/scan-source --path $COMPONENT_PATH --output $SDS_OUTPUT_PATH" \
             --agent sds-re-lead-agent \
             --model "ollama-cloud/$OLLAMA_MODEL"
 
+          echo
+          echo "Files after scan:"
+          find "$SDS_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
       # ---------------------------------------------------------
-      # 7. Generate Reference SDS
+      # 9. Generate Reference SDS
       # ---------------------------------------------------------
       - name: Generate Reference SDS
         shell: bash
@@ -208,21 +262,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Generating Reference SDS..."
+          echo "Model: ollama-cloud/$OLLAMA_MODEL"
+
           opencode run \
             "/generate-re-sds --interactive=false" \
             --agent sds-re-lead-agent \
             --model "ollama-cloud/$OLLAMA_MODEL"
 
-      # ---------------------------------------------------------
-      # 8. Inspect output
-      # ---------------------------------------------------------
-      - name: Inspect SDS output
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Files generated under $SDS_OUTPUT_PATH:"
-
+          echo
+          echo "Files after SDS generation:"
           find "$SDS_OUTPUT_PATH" \
             -type f \
             -print \
@@ -230,7 +279,32 @@ jobs:
             || true
 
       # ---------------------------------------------------------
-      # 9. Validate SDS output
+      # 10. Inspect output
+      # ---------------------------------------------------------
+      - name: Inspect SDS output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Generated files under $SDS_OUTPUT_PATH:"
+
+          find "$SDS_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+          echo
+          echo "Generated file sizes:"
+
+          find "$SDS_OUTPUT_PATH" \
+            -type f \
+            -exec wc -c {} \; \
+            | sort -n \
+            || true
+
+      # ---------------------------------------------------------
+      # 11. Verify generated SDS
       # ---------------------------------------------------------
       - name: Verify SDS output
         shell: bash
@@ -252,12 +326,21 @@ jobs:
           )"
 
           if [ "$MARKDOWN_COUNT" -eq 0 ]; then
-            echo "No Markdown SDS document was generated."
+            echo "No Markdown SDS output was generated."
 
             echo
-            echo "Available files:"
+            echo "All available output files:"
             find "$SDS_OUTPUT_PATH" \
               -type f \
+              -print \
+              | sort \
+              || true
+
+            echo
+            echo "Workspace files matching SDS:"
+            find workspace \
+              -type f \
+              -iname '*sds*.md' \
               -print \
               | sort \
               || true
@@ -269,7 +352,7 @@ jobs:
           echo "Markdown file count: $MARKDOWN_COUNT"
 
           echo
-          echo "Generated Markdown documents:"
+          echo "Generated Markdown files:"
 
           find "$SDS_OUTPUT_PATH" \
             -type f \
@@ -277,17 +360,8 @@ jobs:
             -print \
             | sort
 
-          echo
-          echo "Document sizes:"
-
-          find "$SDS_OUTPUT_PATH" \
-            -type f \
-            -name '*.md' \
-            -exec wc -c {} \; \
-            | sort -n
-
       # ---------------------------------------------------------
-      # 10. Upload output as GitHub Actions artifact
+      # 12. Upload SDS output as artifact
       # ---------------------------------------------------------
       - name: Upload SDS artifacts
         uses: actions/upload-artifact@v4
