@@ -59,7 +59,7 @@ jobs:
         with:
           repository: dnext-cognia/dnext-ai-rnd
           ref: develop
-          token: ${{ secrets.COMPONENT_REPO_TOKEN }}
+          token: ${{ secrets.COGNIA_REPO_TOKEN }}
           path: workspace/dnext-ai-rnd
           fetch-depth: 1
 
