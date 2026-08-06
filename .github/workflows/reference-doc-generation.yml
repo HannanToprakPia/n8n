@@ -38,6 +38,58 @@ jobs:
           path: component-source
           fetch-depth: 1
 
+      - name: Verify checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d component-source/.git
+
+          echo "Component: ${{ inputs.component_name }}"
+          echo "Repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}"
+          echo "Branch: ${{ inputs.source_branch }}"
+          echo "Commit SHA: $(git -C component-source rev-parse HEAD)"
+
+      - name: Check registered commands
+        shell: bash
+        working-directory: component-source
+        run: |
+          set -euo pipefail
+
+          echo "Searching for generate-re-sds command definitions..."
+          echo
+
+          echo "Files matching generate-re-sds:"
+          find . \
+            -type f \
+            \( -iname '*generate-re-sds*' -o -iname '*scan-source*' \) \
+            -print \
+            | sort \
+            || true
+
+          echo
+          echo "Command directories and files:"
+          find . \
+            -type f \
+            \( -path '*/commands/*' -o -path '*/.opencode/command/*' -o -path '*/.opencode/commands/*' \) \
+            -print \
+            | sort \
+            || true
+
+          echo
+          echo "OpenCode-related files:"
+          find . \
+            -maxdepth 4 \
+            -type f \
+            \( \
+              -iname 'opencode.json' \
+              -o -iname 'opencode.jsonc' \
+              -o -path '*/.opencode/*' \
+            \) \
+            -print \
+            | sort \
+            || true
+
       - name: Install OpenCode
         shell: bash
         run: |
@@ -62,6 +114,24 @@ jobs:
           opencode run \
             "/scan-source --path . --output re-output/sds"
 
+      - name: Verify source scan output
+        shell: bash
+        working-directory: component-source
+        run: |
+          set -euo pipefail
+
+          SOURCE_SCAN="re-output/sds/source-scan.md"
+
+          if [ ! -s "$SOURCE_SCAN" ]; then
+            echo "Source scan output was not generated:"
+            echo "$SOURCE_SCAN"
+            exit 1
+          fi
+
+          echo "Source scan generated successfully:"
+          echo "$SOURCE_SCAN"
+          echo "Character count: $(wc -c < "$SOURCE_SCAN")"
+
       - name: Generate Reference SDS
         shell: bash
         working-directory: component-source
@@ -72,6 +142,33 @@ jobs:
 
           opencode run "/generate-re-sds"
 
+      - name: Verify SDS output
+        shell: bash
+        working-directory: component-source
+        run: |
+          set -euo pipefail
+
+          SDS_FILE="re-output/sds/sds.md"
+
+          if [ ! -s "$SDS_FILE" ]; then
+            echo "Reference SDS was not generated:"
+            echo "$SDS_FILE"
+
+            echo
+            echo "Files currently available under re-output:"
+            find re-output -type f -print | sort || true
+
+            exit 1
+          fi
+
+          echo "Reference SDS generated successfully:"
+          echo "$SDS_FILE"
+          echo "Character count: $(wc -c < "$SDS_FILE")"
+
+          echo
+          echo "First 20 lines:"
+          head -20 "$SDS_FILE"
+
       - name: Inspect generated files
         shell: bash
         working-directory: component-source
@@ -79,10 +176,16 @@ jobs:
           set -euo pipefail
 
           echo "Generated files:"
+
           find . \
             -type f \
-            \( -iname '*sds*.md' -o -path '*/re-output/*' -o -path '*/output/*' \) \
-            -print | sort
+            \( \
+              -iname '*sds*.md' \
+              -o -path '*/re-output/*' \
+              -o -path '*/output/*' \
+            \) \
+            -print \
+            | sort
 
       - name: Upload SDS artifacts
         uses: actions/upload-artifact@v4
@@ -91,4 +194,5 @@ jobs:
           path: |
             component-source/re-output/**
             component-source/output/**
-          if-no-files-found: warn
+          if-no-files-found: error
+          retention-days: 7
