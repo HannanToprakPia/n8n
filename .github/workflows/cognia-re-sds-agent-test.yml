@@ -1,0 +1,392 @@
+name: Cognia RE SDS Agent Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      component_name:
+        description: Component full name
+        required: true
+        type: string
+
+      repository_owner:
+        description: Component repository owner
+        required: true
+        default: dnext-technology
+        type: string
+
+      repository_name:
+        description: Component repository name
+        required: true
+        type: string
+
+      source_branch:
+        description: Component repository branch
+        required: true
+        default: develop
+        type: string
+
+jobs:
+  generate-reference-sds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      OLLAMA_MODEL: gemma4:31b
+
+      COMPONENT_PATH: workspace/component-source
+      COGNIA_REPO_PATH: workspace/dnext-ai-rnd
+      SDS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+      SDS_OUTPUT_PATH: workspace/sds-output
+
+    steps:
+      # ---------------------------------------------------------
+      # 1. Component repository
+      # ---------------------------------------------------------
+      - name: Checkout component repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}
+          ref: ${{ inputs.source_branch }}
+          token: ${{ secrets.COMPONENT_REPO_TOKEN }}
+          path: workspace/component-source
+          fetch-depth: 1
+
+      # ---------------------------------------------------------
+      # 2. Cognia framework repository
+      # ---------------------------------------------------------
+      - name: Checkout Cognia RE framework repository
+        uses: actions/checkout@v4
+        with:
+          repository: dnext-cognia/dnext-ai-rnd
+          ref: develop
+          token: ${{ secrets.COMPONENT_REPO_TOKEN }}
+          path: workspace/dnext-ai-rnd
+          fetch-depth: 1
+
+      # ---------------------------------------------------------
+      # 3. Verify repositories and agent definitions
+      # ---------------------------------------------------------
+      - name: Verify repositories and SDS agent
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "$COMPONENT_PATH/.git" ]; then
+            echo "Component repository checkout failed:"
+            echo "$COMPONENT_PATH"
+            exit 1
+          fi
+
+          if [ ! -d "$COGNIA_REPO_PATH/.git" ]; then
+            echo "Cognia framework repository checkout failed:"
+            echo "$COGNIA_REPO_PATH"
+            exit 1
+          fi
+
+          AGENT_FILE="$SDS_FRAMEWORK_PATH/.opencode/agents/sds-re-lead-agent.md"
+
+          if [ ! -s "$AGENT_FILE" ]; then
+            echo "SDS-RE lead agent definition was not found:"
+            echo "$AGENT_FILE"
+
+            echo
+            echo "Available agent files:"
+            find "$COGNIA_REPO_PATH" \
+              -type f \
+              -path '*/.opencode/agents/*' \
+              -print \
+              | sort \
+              || true
+
+            exit 1
+          fi
+
+          echo "Component repository:"
+          echo "${{ inputs.repository_owner }}/${{ inputs.repository_name }}"
+
+          echo
+          echo "Component commit:"
+          git -C "$COMPONENT_PATH" rev-parse HEAD
+
+          echo
+          echo "Cognia framework commit:"
+          git -C "$COGNIA_REPO_PATH" rev-parse HEAD
+
+          echo
+          echo "SDS agent found:"
+          echo "$AGENT_FILE"
+
+      # ---------------------------------------------------------
+      # 4. Inspect SDS-RE framework
+      # ---------------------------------------------------------
+      - name: Inspect SDS-RE framework
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "SDS-RE working directory:"
+          echo "$SDS_FRAMEWORK_PATH"
+
+          echo
+          echo "Agent files:"
+          find "$SDS_FRAMEWORK_PATH/.opencode/agents" \
+            -maxdepth 1 \
+            -type f \
+            -print \
+            | sort
+
+          echo
+          echo "Command files:"
+          find "$SDS_FRAMEWORK_PATH" \
+            -type f \
+            \( \
+              -path '*/commands/*' \
+              -o -path '*/.opencode/command/*' \
+              -o -path '*/.opencode/commands/*' \
+            \) \
+            -print \
+            | sort \
+            || true
+
+      # ---------------------------------------------------------
+      # 5. Prepare output folder
+      # ---------------------------------------------------------
+      - name: Prepare SDS workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf "$SDS_OUTPUT_PATH"
+          mkdir -p "$SDS_OUTPUT_PATH"
+
+          echo "Output directory:"
+          realpath "$SDS_OUTPUT_PATH"
+
+      # ---------------------------------------------------------
+      # 6. Test Ollama Cloud
+      # ---------------------------------------------------------
+      - name: Test Ollama Cloud
+        shell: bash
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OLLAMA_API_KEY:-}" ]; then
+            echo "OLLAMA_API_KEY secret is missing."
+            exit 1
+          fi
+
+          HTTP_CODE="$(
+            curl \
+              --silent \
+              --show-error \
+              --output /tmp/ollama-test.json \
+              --write-out "%{http_code}" \
+              "https://ollama.com/api/chat" \
+              -H "Authorization: Bearer $OLLAMA_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data "{
+                \"model\": \"$OLLAMA_MODEL\",
+                \"messages\": [
+                  {
+                    \"role\": \"user\",
+                    \"content\": \"Reply only with OK\"
+                  }
+                ],
+                \"stream\": false
+              }"
+          )"
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Ollama Cloud test failed with HTTP $HTTP_CODE."
+            cat /tmp/ollama-test.json || true
+            exit 1
+          fi
+
+          echo "Ollama Cloud connection succeeded."
+          echo "Model: $OLLAMA_MODEL"
+
+      # ---------------------------------------------------------
+      # 7. Install OpenCode
+      # ---------------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenCode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm install --global opencode-ai@latest
+
+          echo "OpenCode executable:"
+          command -v opencode
+
+          echo
+          echo "OpenCode version:"
+          opencode --version
+
+      # ---------------------------------------------------------
+      # 8. Configure OpenCode for Ollama Cloud
+      # ---------------------------------------------------------
+      - name: Configure OpenCode for Ollama Cloud
+        shell: bash
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          CONFIG_DIR="$HOME/.config/opencode"
+          CONFIG_FILE="$CONFIG_DIR/opencode.json"
+
+          mkdir -p "$CONFIG_DIR"
+
+          cat > "$CONFIG_FILE" <<'EOF'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "model": "ollama-cloud/gemma4:31b",
+            "provider": {
+              "ollama-cloud": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama Cloud",
+                "options": {
+                  "baseURL": "https://ollama.com/v1",
+                  "apiKey": "{env:OLLAMA_API_KEY}"
+                },
+                "models": {
+                  "gemma4:31b": {
+                    "name": "Gemma 4 31B"
+                  }
+                }
+              }
+            }
+          }
+          EOF
+
+          python -m json.tool "$CONFIG_FILE" > /dev/null
+
+          echo "OpenCode configured for:"
+          echo "ollama-cloud/$OLLAMA_MODEL"
+
+      # ---------------------------------------------------------
+      # 9. Run real SDS-RE scan command
+      # Working directory is critical: Cognia-RE/SDS-RE
+      # ---------------------------------------------------------
+      - name: Run SDS-RE source scan
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          echo "Current working directory:"
+          pwd
+
+          echo
+          echo "Component path:"
+          realpath ../../../component-source
+
+          echo
+          echo "Output path:"
+          realpath ../../../sds-output
+
+          opencode run \
+            "/scan-source --path ../../../component-source --output ../../../sds-output" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after source scan:"
+          find ../../../sds-output \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+      # ---------------------------------------------------------
+      # 10. Run real SDS generation command
+      # ---------------------------------------------------------
+      - name: Generate Reference SDS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            "/generate-re-sds --interactive=false" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after SDS generation:"
+          find ../../../sds-output \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+      # ---------------------------------------------------------
+      # 11. Verify generated output
+      # ---------------------------------------------------------
+      - name: Verify SDS output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "$SDS_OUTPUT_PATH" ]; then
+            echo "SDS output directory does not exist:"
+            echo "$SDS_OUTPUT_PATH"
+            exit 1
+          fi
+
+          FILE_COUNT="$(
+            find "$SDS_OUTPUT_PATH" \
+              -type f \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          MARKDOWN_COUNT="$(
+            find "$SDS_OUTPUT_PATH" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo "Total output files: $FILE_COUNT"
+          echo "Markdown output files: $MARKDOWN_COUNT"
+
+          echo
+          echo "Generated files:"
+          find "$SDS_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+          if [ "$MARKDOWN_COUNT" -eq 0 ]; then
+            echo
+            echo "No Markdown SDS output was generated."
+            exit 1
+          fi
+
+          echo
+          echo "SDS generation completed successfully."
+
+      # ---------------------------------------------------------
+      # 12. Upload artifact
+      # ---------------------------------------------------------
+      - name: Upload SDS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognia-reference-sds-${{ inputs.component_name }}
+          path: workspace/sds-output/**
+          if-no-files-found: error
+          retention-days: 7
