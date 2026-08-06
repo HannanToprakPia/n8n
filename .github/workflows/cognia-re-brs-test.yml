@@ -1,0 +1,656 @@
+name: Cognia RE SDS SRS BRS Generation
+
+on:
+  workflow_dispatch:
+    inputs:
+      component_name:
+        description: Component full name
+        required: true
+        type: string
+
+      repository_owner:
+        description: Component repository owner
+        required: true
+        default: dnext-technology
+        type: string
+
+      repository_name:
+        description: Component repository name
+        required: true
+        type: string
+
+      source_branch:
+        description: Component repository branch
+        required: true
+        default: develop
+        type: string
+
+jobs:
+  generate-reference-documents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 420
+
+    env:
+      OLLAMA_MODEL: gemma4:31b
+
+      COMPONENT_CHECKOUT_PATH: workspace/component-source
+      COGNIA_REPO_PATH: workspace/dnext-ai-rnd
+
+      SDS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+      SRS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+      BRS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/BRS-RE
+
+      SDS_LOCAL_COMPONENT_PATH: .runner-work/component-source
+      SDS_LOCAL_OUTPUT_PATH: .runner-work/sds-output
+
+      SRS_LOCAL_COMPONENT_PATH: .runner-work/component-source
+      SRS_LOCAL_SDS_INPUT_PATH: .runner-work/sds-input
+      SRS_LOCAL_OUTPUT_PATH: .runner-work/srs-output
+
+      BRS_LOCAL_COMPONENT_PATH: .runner-work/component-source
+      BRS_LOCAL_SRS_INPUT_PATH: .runner-work/srs-input
+      BRS_LOCAL_OUTPUT_PATH: .runner-work/brs-output
+
+    steps:
+      # =========================================================
+      # 1. CHECKOUT COMPONENT REPOSITORY
+      # =========================================================
+
+      - name: Checkout component repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}
+          ref: ${{ inputs.source_branch }}
+          token: ${{ secrets.COMPONENT_REPO_TOKEN }}
+          path: workspace/component-source
+          fetch-depth: 1
+
+      # =========================================================
+      # 2. CHECKOUT COGNIA RE FRAMEWORK
+      # =========================================================
+
+      - name: Checkout Cognia RE framework repository
+        uses: actions/checkout@v4
+        with:
+          repository: dnext-cognia/dnext-ai-rnd
+          ref: develop
+          token: ${{ secrets.COGNIA_REPO_TOKEN }}
+          path: workspace/dnext-ai-rnd
+          fetch-depth: 1
+
+      # =========================================================
+      # 3. VERIFY FRAMEWORK FILES
+      # =========================================================
+
+      - name: Verify Cognia RE frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REQUIRED_FILES=(
+            "$SDS_FRAMEWORK_PATH/.opencode/agents/sds-re-lead-agent.md"
+            "$SDS_FRAMEWORK_PATH/.opencode/commands/scan-source.md"
+            "$SDS_FRAMEWORK_PATH/.opencode/commands/generate-re-sds.md"
+
+            "$SRS_FRAMEWORK_PATH/.opencode/agents/srs-re-lead-agent.md"
+            "$SRS_FRAMEWORK_PATH/.opencode/commands/scan-source.md"
+            "$SRS_FRAMEWORK_PATH/.opencode/commands/generate-re-srs.md"
+
+            "$BRS_FRAMEWORK_PATH/.opencode/agents/brs-re-lead-agent.md"
+            "$BRS_FRAMEWORK_PATH/.opencode/commands/scan-source.md"
+            "$BRS_FRAMEWORK_PATH/.opencode/commands/generate-re-brs.md"
+          )
+
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -s "$file" ]; then
+              echo "Missing required framework file:"
+              echo "$file"
+              exit 1
+            fi
+          done
+
+          echo "All required Cognia RE framework files found."
+
+      # =========================================================
+      # 4. SETUP NODE + OPENCODE
+      # =========================================================
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenCode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm install --global opencode-ai@latest
+
+          command -v opencode
+          opencode --version
+
+      # =========================================================
+      # 5. CONFIGURE OLLAMA CLOUD
+      # =========================================================
+
+      - name: Configure OpenCode for Ollama Cloud
+        shell: bash
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OLLAMA_API_KEY:-}" ]; then
+            echo "OLLAMA_API_KEY secret is missing."
+            exit 1
+          fi
+
+          CONFIG_DIR="$HOME/.config/opencode"
+          CONFIG_FILE="$CONFIG_DIR/opencode.json"
+
+          mkdir -p "$CONFIG_DIR"
+
+          cat > "$CONFIG_FILE" <<'EOF'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "model": "ollama-cloud/gemma4:31b",
+            "provider": {
+              "ollama-cloud": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama Cloud",
+                "options": {
+                  "baseURL": "https://ollama.com/v1",
+                  "apiKey": "{env:OLLAMA_API_KEY}"
+                },
+                "models": {
+                  "gemma4:31b": {
+                    "name": "Gemma 4 31B"
+                  }
+                }
+              }
+            }
+          }
+          EOF
+
+          python -m json.tool "$CONFIG_FILE" > /dev/null
+
+          echo "OpenCode configured for:"
+          echo "ollama-cloud/$OLLAMA_MODEL"
+
+      # =========================================================
+      # 6. PREPARE SDS WORKSPACE
+      # =========================================================
+
+      - name: Prepare SDS workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDS_ROOT="$SDS_FRAMEWORK_PATH/.runner-work"
+          SDS_COMPONENT="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_COMPONENT_PATH"
+          SDS_OUTPUT="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
+
+          rm -rf "$SDS_ROOT"
+
+          mkdir -p "$SDS_COMPONENT"
+          mkdir -p "$SDS_OUTPUT"
+
+          tar \
+            --exclude='.git' \
+            -C "$COMPONENT_CHECKOUT_PATH" \
+            -cf - . \
+            | tar \
+                -C "$SDS_COMPONENT" \
+                -xf -
+
+          echo "SDS workspace prepared."
+
+      # =========================================================
+      # 7. SDS SOURCE SCAN
+      # =========================================================
+
+      - name: Run SDS-RE source scan
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            "/scan-source --path $SDS_LOCAL_COMPONENT_PATH --output $SDS_LOCAL_OUTPUT_PATH" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+      # =========================================================
+      # 8. GENERATE SDS
+      # =========================================================
+
+      - name: Generate Reference SDS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            --continue \
+            "/generate-re-sds --interactive=false" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo "SDS files:"
+          find "$SDS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort
+
+      # =========================================================
+      # 9. VERIFY SDS
+      # =========================================================
+
+      - name: Verify SDS output
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        run: |
+          set -euo pipefail
+
+          SDS_COUNT="$(
+            find "$SDS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          if [ "$SDS_COUNT" -eq 0 ]; then
+            echo "No SDS markdown output generated."
+            exit 1
+          fi
+
+          echo "SDS generation successful."
+          echo "Markdown count: $SDS_COUNT"
+
+      # =========================================================
+      # 10. PREPARE SRS WORKSPACE
+      # =========================================================
+
+      - name: Prepare SRS workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRS_ROOT="$SRS_FRAMEWORK_PATH/.runner-work"
+          SRS_COMPONENT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_COMPONENT_PATH"
+          SRS_INPUT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_SDS_INPUT_PATH"
+          SRS_OUTPUT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_OUTPUT_PATH"
+
+          SDS_OUTPUT="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
+
+          rm -rf "$SRS_ROOT"
+
+          mkdir -p "$SRS_COMPONENT"
+          mkdir -p "$SRS_INPUT"
+          mkdir -p "$SRS_OUTPUT"
+
+          tar \
+            --exclude='.git' \
+            -C "$COMPONENT_CHECKOUT_PATH" \
+            -cf - . \
+            | tar \
+                -C "$SRS_COMPONENT" \
+                -xf -
+
+          cp -a "$SDS_OUTPUT/." "$SRS_INPUT/"
+
+          echo "SDS copied to SRS input."
+
+      # =========================================================
+      # 11. SRS SOURCE SCAN
+      # =========================================================
+
+      - name: Run SRS-RE source scan
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            "/scan-source --path $SRS_LOCAL_COMPONENT_PATH --sds-output $SRS_LOCAL_SDS_INPUT_PATH --output $SRS_LOCAL_OUTPUT_PATH" \
+            --agent srs-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+      # =========================================================
+      # 12. GENERATE SRS
+      # =========================================================
+
+      - name: Generate Reference SRS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            --continue \
+            "/generate-re-srs --interactive=false" \
+            --agent srs-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo "SRS files:"
+          find "$SRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort
+
+      # =========================================================
+      # 13. VERIFY SRS
+      # =========================================================
+
+      - name: Verify SRS output
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        run: |
+          set -euo pipefail
+
+          SRS_COUNT="$(
+            find "$SRS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          if [ "$SRS_COUNT" -eq 0 ]; then
+            echo "No SRS markdown output generated."
+            exit 1
+          fi
+
+          echo "SRS generation successful."
+          echo "Markdown count: $SRS_COUNT"
+
+      # =========================================================
+      # 14. PREPARE BRS WORKSPACE
+      # =========================================================
+
+      - name: Prepare BRS workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BRS_ROOT="$BRS_FRAMEWORK_PATH/.runner-work"
+          BRS_COMPONENT="$BRS_FRAMEWORK_PATH/$BRS_LOCAL_COMPONENT_PATH"
+          BRS_SRS_INPUT="$BRS_FRAMEWORK_PATH/$BRS_LOCAL_SRS_INPUT_PATH"
+          BRS_OUTPUT="$BRS_FRAMEWORK_PATH/$BRS_LOCAL_OUTPUT_PATH"
+
+          SRS_OUTPUT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_OUTPUT_PATH"
+
+          rm -rf "$BRS_ROOT"
+
+          mkdir -p "$BRS_COMPONENT"
+          mkdir -p "$BRS_SRS_INPUT"
+          mkdir -p "$BRS_OUTPUT"
+
+          tar \
+            --exclude='.git' \
+            -C "$COMPONENT_CHECKOUT_PATH" \
+            -cf - . \
+            | tar \
+                -C "$BRS_COMPONENT" \
+                -xf -
+
+          cp -a "$SRS_OUTPUT/." "$BRS_SRS_INPUT/"
+
+          SRS_INPUT_COUNT="$(
+            find "$BRS_SRS_INPUT" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          if [ "$SRS_INPUT_COUNT" -eq 0 ]; then
+            echo "No SRS input copied to BRS."
+            exit 1
+          fi
+
+          echo "SRS files copied to BRS input:"
+
+          find "$BRS_SRS_INPUT" \
+            -type f \
+            -print \
+            | sort
+
+      # =========================================================
+      # 15. BRS SOURCE SCAN
+      # =========================================================
+
+      - name: Run BRS-RE source scan
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/BRS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          echo "Current directory:"
+          pwd
+
+          echo
+          echo "Component input:"
+          realpath "$BRS_LOCAL_COMPONENT_PATH"
+
+          echo
+          echo "SRS input:"
+          realpath "$BRS_LOCAL_SRS_INPUT_PATH"
+
+          echo
+          echo "BRS output:"
+          realpath "$BRS_LOCAL_OUTPUT_PATH"
+
+          opencode run \
+            "/scan-source --path $BRS_LOCAL_COMPONENT_PATH --srs-output $BRS_LOCAL_SRS_INPUT_PATH --output $BRS_LOCAL_OUTPUT_PATH" \
+            --agent brs-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after BRS source scan:"
+
+          find "$BRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+      # =========================================================
+      # 16. GENERATE BRS
+      # =========================================================
+
+      - name: Generate Reference BRS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/BRS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            --continue \
+            "/generate-re-brs --interactive=false" \
+            --agent brs-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after BRS generation:"
+
+          find "$BRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+          echo
+          echo "Possible BRS files in framework root:"
+
+          find . \
+            -maxdepth 1 \
+            -type f \
+            -iname '*BRS*.md' \
+            -print \
+            | sort \
+            || true
+
+      # =========================================================
+      # 17. COLLECT FINAL BRS
+      # =========================================================
+
+      - name: Collect final BRS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/BRS-RE
+        run: |
+          set -euo pipefail
+
+          FINAL_BRS=""
+
+          FINAL_BRS="$(
+            find "$BRS_LOCAL_OUTPUT_PATH" \
+              -maxdepth 1 \
+              -type f \
+              \( \
+                -iname 'final_brs.md' \
+                -o -iname 'FINAL_BRS.md' \
+                -o -iname 'BRS.md' \
+                -o -iname 'BRS_*Final*.md' \
+                -o -iname 'BRS_*.md' \
+              \) \
+              | head -n 1
+          )"
+
+          if [ -z "$FINAL_BRS" ]; then
+            FINAL_BRS="$(
+              find . \
+                -maxdepth 1 \
+                -type f \
+                \( \
+                  -iname 'final_brs.md' \
+                  -o -iname 'FINAL_BRS.md' \
+                  -o -iname 'BRS.md' \
+                  -o -iname 'BRS_*Final*.md' \
+                  -o -iname 'BRS_*.md' \
+                \) \
+                | head -n 1
+            )"
+          fi
+
+          if [ -z "$FINAL_BRS" ]; then
+            echo "No consolidated BRS file found."
+
+            echo
+            echo "Available BRS output files:"
+
+            find "$BRS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -print \
+              | sort \
+              || true
+
+            exit 1
+          fi
+
+          echo "Final BRS found:"
+          echo "$FINAL_BRS"
+
+          case "$FINAL_BRS" in
+            "$BRS_LOCAL_OUTPUT_PATH"/*)
+              echo "Final BRS already inside output directory."
+              ;;
+            *)
+              cp "$FINAL_BRS" "$BRS_LOCAL_OUTPUT_PATH/final_brs.md"
+              FINAL_BRS="$BRS_LOCAL_OUTPUT_PATH/final_brs.md"
+              ;;
+          esac
+
+          echo
+          echo "Final BRS size:"
+
+          wc -c "$FINAL_BRS"
+
+      # =========================================================
+      # 18. VERIFY BRS
+      # =========================================================
+
+      - name: Verify BRS output
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/BRS-RE
+        run: |
+          set -euo pipefail
+
+          BRS_COUNT="$(
+            find "$BRS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo "BRS Markdown count: $BRS_COUNT"
+
+          if [ "$BRS_COUNT" -eq 0 ]; then
+            echo "No BRS Markdown output generated."
+            exit 1
+          fi
+
+          echo
+          echo "Generated BRS files:"
+
+          find "$BRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort
+
+          echo
+          echo "BRS generation verified successfully."
+
+      # =========================================================
+      # 19. UPLOAD SDS ARTIFACT
+      # =========================================================
+
+      - name: Upload SDS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognia-reference-sds-${{ inputs.component_name }}
+          path: |
+            workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/sds-output/**
+          if-no-files-found: error
+          retention-days: 7
+
+      # =========================================================
+      # 20. UPLOAD SRS ARTIFACT
+      # =========================================================
+
+      - name: Upload SRS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognia-reference-srs-${{ inputs.component_name }}
+          path: |
+            workspace/dnext-ai-rnd/Cognia-RE/SRS-RE/.runner-work/srs-output/**
+          if-no-files-found: error
+          retention-days: 7
+
+      # =========================================================
+      # 21. UPLOAD BRS ARTIFACT
+      # =========================================================
+
+      - name: Upload BRS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognia-reference-brs-${{ inputs.component_name }}
+          path: |
+            workspace/dnext-ai-rnd/Cognia-RE/BRS-RE/.runner-work/brs-output/**
+          if-no-files-found: error
+          retention-days: 7
