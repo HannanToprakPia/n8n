@@ -37,14 +37,13 @@ jobs:
       COGNIA_REPO_PATH: workspace/dnext-ai-rnd
       SDS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
 
-      # Bunlar SDS-RE çalışma dizininin altında kalır.
       LOCAL_WORK_ROOT: .runner-work
       LOCAL_COMPONENT_PATH: .runner-work/component-source
       LOCAL_SDS_OUTPUT_PATH: .runner-work/sds-output
 
     steps:
       # ---------------------------------------------------------
-      # 1. Component repository checkout
+      # 1. Checkout component repository
       # ---------------------------------------------------------
       - name: Checkout component repository
         uses: actions/checkout@v4
@@ -56,7 +55,7 @@ jobs:
           fetch-depth: 1
 
       # ---------------------------------------------------------
-      # 2. Cognia framework repository checkout
+      # 2. Checkout Cognia framework repository
       # ---------------------------------------------------------
       - name: Checkout Cognia RE framework repository
         uses: actions/checkout@v4
@@ -68,7 +67,7 @@ jobs:
           fetch-depth: 1
 
       # ---------------------------------------------------------
-      # 3. Verify repositories, agent and commands
+      # 3. Verify repositories and SDS framework files
       # ---------------------------------------------------------
       - name: Verify repositories and SDS framework
         shell: bash
@@ -114,11 +113,11 @@ jobs:
           git -C "$COGNIA_REPO_PATH" rev-parse HEAD
 
           echo
-          echo "Required agent and command files:"
+          echo "Required framework files:"
           printf '%s\n' "${REQUIRED_FILES[@]}"
 
       # ---------------------------------------------------------
-      # 4. Copy component into SDS-RE working directory
+      # 4. Copy component into the SDS-RE working directory
       # ---------------------------------------------------------
       - name: Prepare local SDS workspace
         shell: bash
@@ -134,7 +133,6 @@ jobs:
           mkdir -p "$LOCAL_COMPONENT"
           mkdir -p "$LOCAL_OUTPUT"
 
-          # Component içeriğini kopyala; .git klasörünü taşıma.
           tar \
             --exclude='.git' \
             -C "$COMPONENT_CHECKOUT_PATH" \
@@ -168,73 +166,16 @@ jobs:
           fi
 
       # ---------------------------------------------------------
-      # 5. Test Ollama Cloud
-      # ---------------------------------------------------------
-      - name: Test Ollama Cloud
-        shell: bash
-        env:
-          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${OLLAMA_API_KEY:-}" ]; then
-            echo "OLLAMA_API_KEY secret is missing."
-            exit 1
-          fi
-
-          MAX_ATTEMPTS=5
-          WAIT_SECONDS=15
-
-          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
-            echo "Ollama Cloud test attempt $attempt/$MAX_ATTEMPTS..."
-
-            HTTP_CODE="$(
-              curl \
-                --silent \
-                --show-error \
-                --output /tmp/ollama-test.json \
-                --write-out "%{http_code}" \
-                "https://ollama.com/api/chat" \
-                -H "Authorization: Bearer $OLLAMA_API_KEY" \
-                -H "Content-Type: application/json" \
-                --data "{
-                  \"model\": \"$OLLAMA_MODEL\",
-                  \"messages\": [
-                    {
-                      \"role\": \"user\",
-                      \"content\": \"Reply only with OK\"
-                    }
-                  ],
-                  \"stream\": false
-                }"
-            )"
-
-            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-              echo "Ollama Cloud connection succeeded."
-              echo "Model: $OLLAMA_MODEL"
-              exit 0
-            fi
-
-            echo "Attempt $attempt failed with HTTP $HTTP_CODE."
-            cat /tmp/ollama-test.json || true
-
-            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-              echo "Waiting $WAIT_SECONDS seconds before retry..."
-              sleep "$WAIT_SECONDS"
-            fi
-          done
-
-          echo "Ollama Cloud test failed after $MAX_ATTEMPTS attempts."
-          exit 1
-      
-      # ---------------------------------------------------------
-      # 6. Install OpenCode
+      # 5. Setup Node.js
       # ---------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
+      # ---------------------------------------------------------
+      # 6. Install OpenCode
+      # ---------------------------------------------------------
       - name: Install OpenCode
         shell: bash
         run: |
@@ -258,6 +199,11 @@ jobs:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
           set -euo pipefail
+
+          if [ -z "${OLLAMA_API_KEY:-}" ]; then
+            echo "OLLAMA_API_KEY secret is missing."
+            exit 1
+          fi
 
           CONFIG_DIR="$HOME/.config/opencode"
           CONFIG_FILE="$CONFIG_DIR/opencode.json"
@@ -292,7 +238,7 @@ jobs:
           echo "ollama-cloud/$OLLAMA_MODEL"
 
       # ---------------------------------------------------------
-      # 8. Run actual SDS-RE source scan
+      # 8. Run SDS-RE source scan
       # ---------------------------------------------------------
       - name: Run SDS-RE source scan
         shell: bash
@@ -327,42 +273,7 @@ jobs:
             || true
 
       # ---------------------------------------------------------
-      # 9. Verify scan created persistent files
-      # ---------------------------------------------------------
-      - name: Verify SDS source scan
-        shell: bash
-        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
-        run: |
-          set -euo pipefail
-
-          FILE_COUNT="$(
-            find "$LOCAL_SDS_OUTPUT_PATH" \
-              -type f \
-              | wc -l \
-              | tr -d ' '
-          )"
-
-          echo "Source scan output file count: $FILE_COUNT"
-
-          if [ "$FILE_COUNT" -eq 0 ]; then
-            echo "Source scan did not produce any persistent files."
-
-            echo
-            echo "Files created under the local runner workspace:"
-            find "$LOCAL_WORK_ROOT" \
-              -type f \
-              -print \
-              | sort \
-              || true
-
-            exit 1
-          fi
-
-          echo
-          echo "Source scan completed successfully."
-
-      # ---------------------------------------------------------
-      # 10. Generate SDS
+      # 9. Continue the same OpenCode session and generate SDS
       # ---------------------------------------------------------
       - name: Generate Reference SDS
         shell: bash
@@ -373,6 +284,7 @@ jobs:
           set -euo pipefail
 
           opencode run \
+            --continue \
             "/generate-re-sds --interactive=false" \
             --agent sds-re-lead-agent \
             --model "ollama-cloud/$OLLAMA_MODEL"
@@ -386,7 +298,7 @@ jobs:
             || true
 
       # ---------------------------------------------------------
-      # 11. Search for all generated SDS files
+      # 10. Inspect all possible generated SDS files
       # ---------------------------------------------------------
       - name: Inspect generated SDS files
         shell: bash
@@ -402,7 +314,7 @@ jobs:
             || true
 
           echo
-          echo "Markdown files created anywhere under local workspace:"
+          echo "Markdown files under local runner workspace:"
           find "$LOCAL_WORK_ROOT" \
             -type f \
             -name '*.md' \
@@ -411,7 +323,7 @@ jobs:
             || true
 
           echo
-          echo "Potential generated SDS files inside SDS-RE:"
+          echo "Potential generated SDS files anywhere under SDS-RE:"
           find . \
             -type f \
             \( \
@@ -426,7 +338,7 @@ jobs:
             || true
 
       # ---------------------------------------------------------
-      # 12. Verify final Markdown output
+      # 11. Verify final SDS output
       # ---------------------------------------------------------
       - name: Verify SDS output
         shell: bash
@@ -449,9 +361,18 @@ jobs:
             echo "$LOCAL_SDS_OUTPUT_PATH"
 
             echo
-            echo "All local workspace files:"
+            echo "All files under local runner workspace:"
             find "$LOCAL_WORK_ROOT" \
               -type f \
+              -print \
+              | sort \
+              || true
+
+            echo
+            echo "All Markdown files created under SDS-RE:"
+            find . \
+              -type f \
+              -name '*.md' \
               -print \
               | sort \
               || true
@@ -479,7 +400,7 @@ jobs:
           echo "SDS generation completed successfully."
 
       # ---------------------------------------------------------
-      # 13. Upload output directly from SDS-RE local workspace
+      # 12. Upload generated SDS artifact
       # ---------------------------------------------------------
       - name: Upload SDS artifacts
         uses: actions/upload-artifact@v4
