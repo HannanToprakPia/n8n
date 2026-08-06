@@ -1,0 +1,532 @@
+name: Cognia RE SDS and SRS Generation
+
+on:
+  workflow_dispatch:
+    inputs:
+      component_name:
+        description: Component full name
+        required: true
+        type: string
+
+      repository_owner:
+        description: Component repository owner
+        required: true
+        default: dnext-technology
+        type: string
+
+      repository_name:
+        description: Component repository name
+        required: true
+        type: string
+
+      source_branch:
+        description: Component repository branch
+        required: true
+        default: develop
+        type: string
+
+jobs:
+  generate-reference-documents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    env:
+      OLLAMA_MODEL: gemma4:31b
+
+      COMPONENT_CHECKOUT_PATH: workspace/component-source
+      COGNIA_REPO_PATH: workspace/dnext-ai-rnd
+
+      SDS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+      SRS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+
+      SDS_LOCAL_ROOT: .runner-work
+      SDS_LOCAL_COMPONENT_PATH: .runner-work/component-source
+      SDS_LOCAL_OUTPUT_PATH: .runner-work/sds-output
+
+      SRS_LOCAL_ROOT: .runner-work
+      SRS_LOCAL_COMPONENT_PATH: .runner-work/component-source
+      SRS_LOCAL_SDS_INPUT_PATH: .runner-work/sds-input
+      SRS_LOCAL_OUTPUT_PATH: .runner-work/srs-output
+
+    steps:
+      # =========================================================
+      # 1. CHECKOUT REPOSITORIES
+      # =========================================================
+
+      - name: Checkout component repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}
+          ref: ${{ inputs.source_branch }}
+          token: ${{ secrets.COMPONENT_REPO_TOKEN }}
+          path: workspace/component-source
+          fetch-depth: 1
+
+      - name: Checkout Cognia RE framework repository
+        uses: actions/checkout@v4
+        with:
+          repository: dnext-cognia/dnext-ai-rnd
+          ref: develop
+          token: ${{ secrets.COGNIA_REPO_TOKEN }}
+          path: workspace/dnext-ai-rnd
+          fetch-depth: 1
+
+      # =========================================================
+      # 2. VERIFY FRAMEWORK FILES
+      # =========================================================
+
+      - name: Verify repositories and frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "$COMPONENT_CHECKOUT_PATH/.git" ]; then
+            echo "Component repository checkout failed:"
+            echo "$COMPONENT_CHECKOUT_PATH"
+            exit 1
+          fi
+
+          if [ ! -d "$COGNIA_REPO_PATH/.git" ]; then
+            echo "Cognia repository checkout failed:"
+            echo "$COGNIA_REPO_PATH"
+            exit 1
+          fi
+
+          REQUIRED_FILES=(
+            "$SDS_FRAMEWORK_PATH/.opencode/agents/sds-re-lead-agent.md"
+            "$SDS_FRAMEWORK_PATH/.opencode/commands/scan-source.md"
+            "$SDS_FRAMEWORK_PATH/.opencode/commands/generate-re-sds.md"
+            "$SRS_FRAMEWORK_PATH/.opencode/agents/srs-re-lead-agent.md"
+            "$SRS_FRAMEWORK_PATH/.opencode/commands/scan-source.md"
+            "$SRS_FRAMEWORK_PATH/.opencode/commands/generate-re-srs.md"
+          )
+
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -s "$file" ]; then
+              echo "Required framework file is missing or empty:"
+              echo "$file"
+              exit 1
+            fi
+          done
+
+          echo "Component repository:"
+          echo "${{ inputs.repository_owner }}/${{ inputs.repository_name }}"
+
+          echo
+          echo "Component commit:"
+          git -C "$COMPONENT_CHECKOUT_PATH" rev-parse HEAD
+
+          echo
+          echo "Cognia framework commit:"
+          git -C "$COGNIA_REPO_PATH" rev-parse HEAD
+
+          echo
+          echo "Framework verification completed."
+
+      # =========================================================
+      # 3. INSTALL AND CONFIGURE OPENCODE
+      # =========================================================
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenCode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm install --global opencode-ai@latest
+
+          echo "OpenCode executable:"
+          command -v opencode
+
+          echo
+          echo "OpenCode version:"
+          opencode --version
+
+      - name: Configure OpenCode for Ollama Cloud
+        shell: bash
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OLLAMA_API_KEY:-}" ]; then
+            echo "OLLAMA_API_KEY secret is missing."
+            exit 1
+          fi
+
+          CONFIG_DIR="$HOME/.config/opencode"
+          CONFIG_FILE="$CONFIG_DIR/opencode.json"
+
+          mkdir -p "$CONFIG_DIR"
+
+          cat > "$CONFIG_FILE" <<'EOF'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "model": "ollama-cloud/gemma4:31b",
+            "provider": {
+              "ollama-cloud": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama Cloud",
+                "options": {
+                  "baseURL": "https://ollama.com/v1",
+                  "apiKey": "{env:OLLAMA_API_KEY}"
+                },
+                "models": {
+                  "gemma4:31b": {
+                    "name": "Gemma 4 31B"
+                  }
+                }
+              }
+            }
+          }
+          EOF
+
+          python -m json.tool "$CONFIG_FILE" > /dev/null
+
+          echo "OpenCode configured for:"
+          echo "ollama-cloud/$OLLAMA_MODEL"
+
+      # =========================================================
+      # 4. PREPARE SDS LOCAL WORKSPACE
+      # =========================================================
+
+      - name: Prepare SDS local workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDS_LOCAL_ROOT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_ROOT"
+          SDS_COMPONENT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_COMPONENT_PATH"
+          SDS_OUTPUT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
+
+          rm -rf "$SDS_LOCAL_ROOT_ABS"
+
+          mkdir -p "$SDS_COMPONENT_ABS"
+          mkdir -p "$SDS_OUTPUT_ABS"
+
+          tar \
+            --exclude='.git' \
+            -C "$COMPONENT_CHECKOUT_PATH" \
+            -cf - . \
+            | tar \
+                -C "$SDS_COMPONENT_ABS" \
+                -xf -
+
+          if [ ! -s "$SDS_COMPONENT_ABS/pom.xml" ]; then
+            echo "SDS component copy failed: pom.xml not found."
+            exit 1
+          fi
+
+          echo "SDS component path:"
+          realpath "$SDS_COMPONENT_ABS"
+
+          echo
+          echo "SDS output path:"
+          realpath "$SDS_OUTPUT_ABS"
+
+      # =========================================================
+      # 5. GENERATE SDS
+      # =========================================================
+
+      - name: Run SDS-RE source scan
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            "/scan-source --path $SDS_LOCAL_COMPONENT_PATH --output $SDS_LOCAL_OUTPUT_PATH" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after SDS source scan:"
+          find "$SDS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+      - name: Generate Reference SDS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            --continue \
+            "/generate-re-sds --interactive=false" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after SDS generation:"
+          find "$SDS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort
+
+      - name: Verify SDS output
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        run: |
+          set -euo pipefail
+
+          SDS_MARKDOWN_COUNT="$(
+            find "$SDS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo "SDS Markdown file count: $SDS_MARKDOWN_COUNT"
+
+          if [ "$SDS_MARKDOWN_COUNT" -eq 0 ]; then
+            echo "No SDS Markdown files were generated."
+            exit 1
+          fi
+
+          if [ ! -s "$SDS_LOCAL_OUTPUT_PATH/SDS_INDEX.md" ]; then
+            echo "SDS_INDEX.md was not generated."
+            exit 1
+          fi
+
+          echo "SDS generation completed successfully."
+
+      # =========================================================
+      # 6. PREPARE SRS LOCAL WORKSPACE
+      # =========================================================
+
+      - name: Prepare SRS local workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRS_LOCAL_ROOT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_ROOT"
+          SRS_COMPONENT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_COMPONENT_PATH"
+          SRS_SDS_INPUT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_SDS_INPUT_PATH"
+          SRS_OUTPUT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_OUTPUT_PATH"
+
+          SDS_OUTPUT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
+
+          rm -rf "$SRS_LOCAL_ROOT_ABS"
+
+          mkdir -p "$SRS_COMPONENT_ABS"
+          mkdir -p "$SRS_SDS_INPUT_ABS"
+          mkdir -p "$SRS_OUTPUT_ABS"
+
+          # Component kaynak kodunu SRS-RE çalışma dizinine kopyala.
+          tar \
+            --exclude='.git' \
+            -C "$COMPONENT_CHECKOUT_PATH" \
+            -cf - . \
+            | tar \
+                -C "$SRS_COMPONENT_ABS" \
+                -xf -
+
+          # Üretilen SDS dosyalarını SRS-RE input dizinine kopyala.
+          cp -a "$SDS_OUTPUT_ABS/." "$SRS_SDS_INPUT_ABS/"
+
+          if [ ! -s "$SRS_COMPONENT_ABS/pom.xml" ]; then
+            echo "SRS component copy failed: pom.xml not found."
+            exit 1
+          fi
+
+          SDS_INPUT_MARKDOWN_COUNT="$(
+            find "$SRS_SDS_INPUT_ABS" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          if [ "$SDS_INPUT_MARKDOWN_COUNT" -eq 0 ]; then
+            echo "SRS SDS input directory contains no Markdown files."
+            exit 1
+          fi
+
+          echo "SRS component path:"
+          realpath "$SRS_COMPONENT_ABS"
+
+          echo
+          echo "SRS SDS input path:"
+          realpath "$SRS_SDS_INPUT_ABS"
+
+          echo
+          echo "SRS output path:"
+          realpath "$SRS_OUTPUT_ABS"
+
+          echo
+          echo "SDS input files copied for SRS:"
+          find "$SRS_SDS_INPUT_ABS" \
+            -type f \
+            -print \
+            | sort
+
+      # =========================================================
+      # 7. GENERATE SRS
+      # =========================================================
+
+      - name: Run SRS-RE source scan
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          echo "Current working directory:"
+          pwd
+
+          echo
+          echo "Component path:"
+          realpath "$SRS_LOCAL_COMPONENT_PATH"
+
+          echo
+          echo "SDS input path:"
+          realpath "$SRS_LOCAL_SDS_INPUT_PATH"
+
+          echo
+          echo "SRS output path:"
+          realpath "$SRS_LOCAL_OUTPUT_PATH"
+
+          opencode run \
+            "/scan-source --path $SRS_LOCAL_COMPONENT_PATH --sds-output $SRS_LOCAL_SDS_INPUT_PATH --output $SRS_LOCAL_OUTPUT_PATH" \
+            --agent srs-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after SRS source scan:"
+          find "$SRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+      - name: Generate Reference SRS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          opencode run \
+            --continue \
+            "/generate-re-srs --interactive=false" \
+            --agent srs-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
+
+          echo
+          echo "Files after SRS generation:"
+          find "$SRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+      # =========================================================
+      # 8. VERIFY SRS OUTPUT
+      # =========================================================
+
+      - name: Inspect generated SRS files
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        run: |
+          set -euo pipefail
+
+          echo "Files in expected SRS output directory:"
+          find "$SRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+          echo
+          echo "All Markdown files under SRS local workspace:"
+          find "$SRS_LOCAL_ROOT" \
+            -type f \
+            -name '*.md' \
+            -print \
+            | sort \
+            || true
+
+      - name: Verify SRS output
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        run: |
+          set -euo pipefail
+
+          SRS_MARKDOWN_COUNT="$(
+            find "$SRS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo "SRS Markdown file count: $SRS_MARKDOWN_COUNT"
+
+          if [ "$SRS_MARKDOWN_COUNT" -eq 0 ]; then
+            echo "No SRS Markdown files were generated."
+
+            echo
+            echo "All files under SRS local workspace:"
+            find "$SRS_LOCAL_ROOT" \
+              -type f \
+              -print \
+              | sort \
+              || true
+
+            exit 1
+          fi
+
+          echo
+          echo "Generated SRS documents:"
+          find "$SRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -name '*.md' \
+            -print \
+            | sort
+
+          echo
+          echo "SRS document sizes:"
+          find "$SRS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -name '*.md' \
+            -exec wc -c {} \; \
+            | sort -n
+
+          echo
+          echo "SRS generation completed successfully."
+
+      # =========================================================
+      # 9. UPLOAD SDS AND SRS ARTIFACTS
+      # =========================================================
+
+      - name: Upload SDS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognia-reference-sds-${{ inputs.component_name }}
+          path: |
+            workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/sds-output/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload SRS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognia-reference-srs-${{ inputs.component_name }}
+          path: |
+            workspace/dnext-ai-rnd/Cognia-RE/SRS-RE/.runner-work/srs-output/**
+          if-no-files-found: error
+          retention-days: 7
