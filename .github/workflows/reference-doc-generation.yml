@@ -1,4 +1,4 @@
-name: Reference Document Generation
+name: Cognia RE SDS Generation
 
 on:
   workflow_dispatch:
@@ -27,23 +27,32 @@ on:
 jobs:
   generate-reference-sds:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      OLLAMA_MODEL: gemma4:31b
+      COMPONENT_PATH: workspace/component-source
+      SDS_OUTPUT_PATH: workspace/sds-output
 
     steps:
+      # ---------------------------------------------------------
+      # 1. Checkout component repository
+      # ---------------------------------------------------------
       - name: Checkout component repository
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}
           ref: ${{ inputs.source_branch }}
           token: ${{ secrets.COMPONENT_REPO_TOKEN }}
-          path: component-source
+          path: workspace/component-source
           fetch-depth: 1
 
-      - name: Verify checkout
+      - name: Verify component checkout
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ ! -d "component-source/.git" ]; then
+          if [ ! -d "$COMPONENT_PATH/.git" ]; then
             echo "Component repository checkout failed."
             exit 1
           fi
@@ -51,32 +60,69 @@ jobs:
           echo "Component: ${{ inputs.component_name }}"
           echo "Repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}"
           echo "Branch: ${{ inputs.source_branch }}"
-          echo "Commit SHA: $(git -C component-source rev-parse HEAD)"
+          echo "Commit SHA: $(git -C "$COMPONENT_PATH" rev-parse HEAD)"
 
-      - name: Check command definitions
+      # ---------------------------------------------------------
+      # 2. Prepare workspace
+      # ---------------------------------------------------------
+      - name: Prepare SDS workspace
         shell: bash
-        working-directory: component-source
         run: |
           set -euo pipefail
 
-          echo "Searching for Cognia/OpenCode command definitions..."
-          echo
+          mkdir -p "$SDS_OUTPUT_PATH"
 
-          find . \
-            -type f \
-            \( \
-              -iname '*scan-source*' \
-              -o -iname '*generate-re-sds*' \
-              -o -path '*/commands/*' \
-              -o -path '*/.opencode/command/*' \
-              -o -path '*/.opencode/commands/*' \
-              -o -iname 'opencode.json' \
-              -o -iname 'opencode.jsonc' \
-            \) \
-            -print \
-            | sort \
-            || true
+          echo "Workspace:"
+          find workspace -maxdepth 2 -type d -print | sort
 
+      # ---------------------------------------------------------
+      # 3. Test Ollama Cloud authentication and model access
+      # ---------------------------------------------------------
+      - name: Test Ollama Cloud
+        shell: bash
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OLLAMA_API_KEY:-}" ]; then
+            echo "OLLAMA_API_KEY secret is missing."
+            exit 1
+          fi
+
+          HTTP_CODE="$(
+            curl \
+              --silent \
+              --show-error \
+              --output /tmp/ollama-response.json \
+              --write-out "%{http_code}" \
+              "https://ollama.com/api/chat" \
+              -H "Authorization: Bearer $OLLAMA_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data "{
+                \"model\": \"$OLLAMA_MODEL\",
+                \"messages\": [
+                  {
+                    \"role\": \"user\",
+                    \"content\": \"Reply only with OK\"
+                  }
+                ],
+                \"stream\": false
+              }"
+          )"
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Ollama Cloud test failed with HTTP $HTTP_CODE."
+            cat /tmp/ollama-response.json || true
+            exit 1
+          fi
+
+          echo "Ollama Cloud authentication succeeded."
+          echo "Model: $OLLAMA_MODEL"
+
+      # ---------------------------------------------------------
+      # 4. Install OpenCode
+      # ---------------------------------------------------------
       - name: Install OpenCode
         shell: bash
         run: |
@@ -88,167 +134,165 @@ jobs:
 
           "$HOME/.opencode/bin/opencode" --version
 
-      - name: Scan component source
+      # ---------------------------------------------------------
+      # 5. Configure OpenCode for Ollama Cloud
+      # ---------------------------------------------------------
+      - name: Configure OpenCode for Ollama Cloud
         shell: bash
-        working-directory: component-source
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
           set -euo pipefail
 
-          mkdir -p re-output/sds
+          mkdir -p "$HOME/.config/opencode"
+
+          cat > "$HOME/.config/opencode/opencode.json" <<'EOF'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "model": "ollama-cloud/gemma4:31b",
+            "provider": {
+              "ollama-cloud": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama Cloud",
+                "options": {
+                  "baseURL": "https://ollama.com/v1",
+                  "apiKey": "{env:OLLAMA_API_KEY}",
+                  "headers": {
+                    "Authorization": "Bearer {env:OLLAMA_API_KEY}"
+                  }
+                },
+                "models": {
+                  "gemma4:31b": {
+                    "name": "Gemma 4 31B",
+                    "limit": {
+                      "context": 131072,
+                      "output": 32768
+                    }
+                  }
+                }
+              }
+            }
+          }
+          EOF
+
+          echo "OpenCode provider configuration created."
+          echo "Selected model: ollama-cloud/$OLLAMA_MODEL"
+
+          # API key'i loglamadan config yapısını kontrol et.
+          python -m json.tool \
+            "$HOME/.config/opencode/opencode.json" \
+            > /dev/null
+
+      # ---------------------------------------------------------
+      # 6. SDS-RE source scan
+      # ---------------------------------------------------------
+      - name: SDS-RE scan source
+        shell: bash
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
 
           opencode run \
-            "/scan-source --path . --output re-output/sds"
+            "/scan-source --path $COMPONENT_PATH --output $SDS_OUTPUT_PATH" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
 
-      - name: Verify source scan output
-        shell: bash
-        working-directory: component-source
-        run: |
-          set -euo pipefail
-
-          SCAN_DIR="re-output/sds"
-
-          if [ ! -d "$SCAN_DIR" ]; then
-            echo "Source scan directory was not generated:"
-            echo "$SCAN_DIR"
-            exit 1
-          fi
-
-          echo "Files generated by source scan:"
-          find "$SCAN_DIR" -maxdepth 1 -type f -print | sort
-
-          SOURCE_SCAN="$SCAN_DIR/source-scan.md"
-          SCAN_SUMMARY="$SCAN_DIR/scan-summary.md"
-          SCAN_RESULT="$SCAN_DIR/scan-result.json"
-
-          SOURCE_SCAN_FOUND=false
-
-          if [ -s "$SOURCE_SCAN" ]; then
-            echo "Found source scan document:"
-            echo "$SOURCE_SCAN"
-            SOURCE_SCAN_FOUND=true
-          fi
-
-          if [ -s "$SCAN_SUMMARY" ]; then
-            echo "Found scan summary:"
-            echo "$SCAN_SUMMARY"
-            SOURCE_SCAN_FOUND=true
-          fi
-
-          if [ -s "$SCAN_RESULT" ]; then
-            echo "Found scan result:"
-            echo "$SCAN_RESULT"
-            SOURCE_SCAN_FOUND=true
-          fi
-
-          if [ "$SOURCE_SCAN_FOUND" != "true" ]; then
-            echo
-            echo "No supported source scan output was generated."
-            echo "Expected at least one of:"
-            echo "- $SOURCE_SCAN"
-            echo "- $SCAN_SUMMARY"
-            echo "- $SCAN_RESULT"
-
-            echo
-            echo "Current re-output files:"
-            find re-output -type f -print | sort || true
-
-            exit 1
-          fi
-
-          echo
-          echo "Source scan validation passed."
-
+      # ---------------------------------------------------------
+      # 7. Generate Reference SDS
+      # ---------------------------------------------------------
       - name: Generate Reference SDS
         shell: bash
-        working-directory: component-source
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
           set -euo pipefail
 
-          opencode run "/generate-re-sds"
+          opencode run \
+            "/generate-re-sds --interactive=false" \
+            --agent sds-re-lead-agent \
+            --model "ollama-cloud/$OLLAMA_MODEL"
 
+      # ---------------------------------------------------------
+      # 8. Inspect output
+      # ---------------------------------------------------------
+      - name: Inspect SDS output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Files generated under $SDS_OUTPUT_PATH:"
+
+          find "$SDS_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+      # ---------------------------------------------------------
+      # 9. Validate SDS output
+      # ---------------------------------------------------------
       - name: Verify SDS output
         shell: bash
-        working-directory: component-source
         run: |
           set -euo pipefail
 
-          SDS_DIR="re-output/sds"
-
-          if [ ! -d "$SDS_DIR" ]; then
-            echo "SDS output directory was not generated:"
-            echo "$SDS_DIR"
+          if [ ! -d "$SDS_OUTPUT_PATH" ]; then
+            echo "SDS output directory does not exist:"
+            echo "$SDS_OUTPUT_PATH"
             exit 1
           fi
 
-          echo "Files available under SDS output directory:"
-          find "$SDS_DIR" -maxdepth 1 -type f -print | sort
-
-          SDS_FOUND=false
-
-          POSSIBLE_MAIN_FILES=(
-            "$SDS_DIR/sds.md"
-            "$SDS_DIR/README.md"
-            "$SDS_DIR/architecture.md"
-            "$SDS_DIR/api-endpoints.md"
-          )
-
-          for file in "${POSSIBLE_MAIN_FILES[@]}"; do
-            if [ -s "$file" ]; then
-              echo "Found SDS output:"
-              echo "$file"
-              SDS_FOUND=true
-            fi
-          done
-
           MARKDOWN_COUNT="$(
-            find "$SDS_DIR" \
-              -maxdepth 1 \
+            find "$SDS_OUTPUT_PATH" \
               -type f \
               -name '*.md' \
               | wc -l \
               | tr -d ' '
           )"
 
-          echo "Markdown file count: $MARKDOWN_COUNT"
-
-          if [ "$SDS_FOUND" != "true" ] && [ "$MARKDOWN_COUNT" -eq 0 ]; then
-            echo
-            echo "No SDS markdown output was generated."
+          if [ "$MARKDOWN_COUNT" -eq 0 ]; then
+            echo "No Markdown SDS document was generated."
 
             echo
-            echo "Current re-output files:"
-            find re-output -type f -print | sort || true
+            echo "Available files:"
+            find "$SDS_OUTPUT_PATH" \
+              -type f \
+              -print \
+              | sort \
+              || true
 
             exit 1
           fi
 
-          echo
-          echo "Reference SDS validation passed."
-
-      - name: Inspect generated files
-        shell: bash
-        working-directory: component-source
-        run: |
-          set -euo pipefail
-
-          echo "All generated files under re-output:"
-          find re-output -type f -print | sort
+          echo "SDS generation completed successfully."
+          echo "Markdown file count: $MARKDOWN_COUNT"
 
           echo
-          echo "Generated file sizes:"
-          find re-output \
+          echo "Generated Markdown documents:"
+
+          find "$SDS_OUTPUT_PATH" \
             -type f \
+            -name '*.md' \
+            -print \
+            | sort
+
+          echo
+          echo "Document sizes:"
+
+          find "$SDS_OUTPUT_PATH" \
+            -type f \
+            -name '*.md' \
             -exec wc -c {} \; \
             | sort -n
 
+      # ---------------------------------------------------------
+      # 10. Upload output as GitHub Actions artifact
+      # ---------------------------------------------------------
       - name: Upload SDS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: reference-sds-${{ inputs.component_name }}
-          path: component-source/re-output/sds/**
+          path: workspace/sds-output/**
           if-no-files-found: error
           retention-days: 7
