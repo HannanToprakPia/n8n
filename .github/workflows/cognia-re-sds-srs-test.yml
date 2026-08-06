@@ -28,7 +28,7 @@ on:
 jobs:
   generate-reference-documents:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
 
     env:
       OLLAMA_MODEL: gemma4:31b
@@ -50,7 +50,7 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. CHECKOUT REPOSITORIES
+      # 1. CHECKOUT COMPONENT
       # =========================================================
 
       - name: Checkout component repository
@@ -62,6 +62,10 @@ jobs:
           path: workspace/component-source
           fetch-depth: 1
 
+      # =========================================================
+      # 2. CHECKOUT COGNIA FRAMEWORK
+      # =========================================================
+
       - name: Checkout Cognia RE framework repository
         uses: actions/checkout@v4
         with:
@@ -72,7 +76,7 @@ jobs:
           fetch-depth: 1
 
       # =========================================================
-      # 2. VERIFY FRAMEWORK FILES
+      # 3. VERIFY REPOSITORIES / FRAMEWORK
       # =========================================================
 
       - name: Verify repositories and frameworks
@@ -81,14 +85,12 @@ jobs:
           set -euo pipefail
 
           if [ ! -d "$COMPONENT_CHECKOUT_PATH/.git" ]; then
-            echo "Component repository checkout failed:"
-            echo "$COMPONENT_CHECKOUT_PATH"
+            echo "Component repository checkout failed."
             exit 1
           fi
 
           if [ ! -d "$COGNIA_REPO_PATH/.git" ]; then
-            echo "Cognia repository checkout failed:"
-            echo "$COGNIA_REPO_PATH"
+            echo "Cognia repository checkout failed."
             exit 1
           fi
 
@@ -103,28 +105,20 @@ jobs:
 
           for file in "${REQUIRED_FILES[@]}"; do
             if [ ! -s "$file" ]; then
-              echo "Required framework file is missing or empty:"
+              echo "Required framework file is missing:"
               echo "$file"
               exit 1
             fi
           done
 
-          echo "Component repository:"
-          echo "${{ inputs.repository_owner }}/${{ inputs.repository_name }}"
-
-          echo
           echo "Component commit:"
           git -C "$COMPONENT_CHECKOUT_PATH" rev-parse HEAD
 
-          echo
-          echo "Cognia framework commit:"
+          echo "Cognia commit:"
           git -C "$COGNIA_REPO_PATH" rev-parse HEAD
 
-          echo
-          echo "Framework verification completed."
-
       # =========================================================
-      # 3. INSTALL AND CONFIGURE OPENCODE
+      # 4. NODE + OPENCODE
       # =========================================================
 
       - name: Setup Node.js
@@ -139,12 +133,12 @@ jobs:
 
           npm install --global opencode-ai@latest
 
-          echo "OpenCode executable:"
           command -v opencode
-
-          echo
-          echo "OpenCode version:"
           opencode --version
+
+      # =========================================================
+      # 5. CONFIGURE OLLAMA CLOUD
+      # =========================================================
 
       - name: Configure OpenCode for Ollama Cloud
         shell: bash
@@ -187,11 +181,11 @@ jobs:
 
           python -m json.tool "$CONFIG_FILE" > /dev/null
 
-          echo "OpenCode configured for:"
+          echo "OpenCode configured with:"
           echo "ollama-cloud/$OLLAMA_MODEL"
 
       # =========================================================
-      # 4. PREPARE SDS LOCAL WORKSPACE
+      # 6. PREPARE SDS WORKSPACE
       # =========================================================
 
       - name: Prepare SDS local workspace
@@ -199,37 +193,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          SDS_LOCAL_ROOT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_ROOT"
-          SDS_COMPONENT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_COMPONENT_PATH"
-          SDS_OUTPUT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
+          SDS_ROOT="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_ROOT"
+          SDS_COMPONENT="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_COMPONENT_PATH"
+          SDS_OUTPUT="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
 
-          rm -rf "$SDS_LOCAL_ROOT_ABS"
+          rm -rf "$SDS_ROOT"
 
-          mkdir -p "$SDS_COMPONENT_ABS"
-          mkdir -p "$SDS_OUTPUT_ABS"
+          mkdir -p "$SDS_COMPONENT"
+          mkdir -p "$SDS_OUTPUT"
 
           tar \
             --exclude='.git' \
             -C "$COMPONENT_CHECKOUT_PATH" \
             -cf - . \
             | tar \
-                -C "$SDS_COMPONENT_ABS" \
+                -C "$SDS_COMPONENT" \
                 -xf -
 
-          if [ ! -s "$SDS_COMPONENT_ABS/pom.xml" ]; then
-            echo "SDS component copy failed: pom.xml not found."
+          if [ ! -s "$SDS_COMPONENT/pom.xml" ]; then
+            echo "Component copy failed."
             exit 1
           fi
 
-          echo "SDS component path:"
-          realpath "$SDS_COMPONENT_ABS"
+          echo "SDS component:"
+          realpath "$SDS_COMPONENT"
 
-          echo
-          echo "SDS output path:"
-          realpath "$SDS_OUTPUT_ABS"
+          echo "SDS output:"
+          realpath "$SDS_OUTPUT"
 
       # =========================================================
-      # 5. GENERATE SDS
+      # 7. SDS SOURCE SCAN
       # =========================================================
 
       - name: Run SDS-RE source scan
@@ -246,12 +239,17 @@ jobs:
             --model "ollama-cloud/$OLLAMA_MODEL"
 
           echo
-          echo "Files after SDS source scan:"
+          echo "Files after SDS scan:"
+
           find "$SDS_LOCAL_OUTPUT_PATH" \
             -type f \
             -print \
             | sort \
             || true
+
+      # =========================================================
+      # 8. GENERATE SDS
+      # =========================================================
 
       - name: Generate Reference SDS
         shell: bash
@@ -268,50 +266,151 @@ jobs:
             --model "ollama-cloud/$OLLAMA_MODEL"
 
           echo
-          echo "Files after SDS generation:"
+          echo "Files in SDS output directory:"
+
+          find "$SDS_LOCAL_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
+
+          echo
+          echo "Possible final SDS files in framework root:"
+
+          find . \
+            -maxdepth 1 \
+            -type f \
+            -iname '*SDS*.md' \
+            -print \
+            | sort \
+            || true
+
+      # =========================================================
+      # 9. COLLECT FINAL SDS
+      # =========================================================
+
+      - name: Collect final SDS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        run: |
+          set -euo pipefail
+
+          FINAL_SDS=""
+
+          # Önce output dizini içindeki birleşik SDS'leri ara.
+          FINAL_SDS="$(
+            find "$SDS_LOCAL_OUTPUT_PATH" \
+              -maxdepth 1 \
+              -type f \
+              \( \
+                -iname 'FINAL_SDS.md' \
+                -o -iname 'SDS.md' \
+                -o -iname 'SDS_*Final*.md' \
+                -o -iname 'SDS_*.md' \
+              \) \
+              | head -n 1
+          )"
+
+          # Bulunamadıysa framework root'una bak.
+          if [ -z "$FINAL_SDS" ]; then
+            FINAL_SDS="$(
+              find . \
+                -maxdepth 1 \
+                -type f \
+                \( \
+                  -iname 'FINAL_SDS.md' \
+                  -o -iname 'SDS.md' \
+                  -o -iname 'SDS_*Final*.md' \
+                  -o -iname 'SDS_*.md' \
+                \) \
+                | head -n 1
+            )"
+          fi
+
+          if [ -z "$FINAL_SDS" ]; then
+            echo "No consolidated SDS file was found."
+
+            echo
+            echo "Available SDS output files:"
+            find "$SDS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -print \
+              | sort \
+              || true
+
+            echo
+            echo "Markdown files in framework root:"
+            find . \
+              -maxdepth 1 \
+              -type f \
+              -name '*.md' \
+              -print \
+              | sort \
+              || true
+
+            exit 1
+          fi
+
+          echo "Final SDS found:"
+          echo "$FINAL_SDS"
+
+          # Final belge zaten output altında değilse kopyala.
+          case "$FINAL_SDS" in
+            "$SDS_LOCAL_OUTPUT_PATH"/*)
+              echo "Final SDS is already inside SDS output."
+              ;;
+            *)
+              cp "$FINAL_SDS" "$SDS_LOCAL_OUTPUT_PATH/FINAL_SDS.md"
+              FINAL_SDS="$SDS_LOCAL_OUTPUT_PATH/FINAL_SDS.md"
+              ;;
+          esac
+
+          echo
+          echo "Normalized final SDS:"
+          echo "$FINAL_SDS"
+
+          echo
+          echo "Final SDS size:"
+          wc -c "$FINAL_SDS"
+
+      # =========================================================
+      # 10. VERIFY SDS
+      # =========================================================
+
+      - name: Verify SDS output
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        run: |
+          set -euo pipefail
+
+          SDS_MARKDOWN_COUNT="$(
+            find "$SDS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -name '*.md' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo "SDS Markdown count: $SDS_MARKDOWN_COUNT"
+
+          if [ "$SDS_MARKDOWN_COUNT" -eq 0 ]; then
+            echo "No SDS Markdown files generated."
+            exit 1
+          fi
+
+          echo
+          echo "SDS output files:"
+
           find "$SDS_LOCAL_OUTPUT_PATH" \
             -type f \
             -print \
             | sort
 
-
-
-          - name: Verify SDS output
-          shell: bash
-          working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
-          run: |
-            set -euo pipefail
-        
-            SDS_FILES=$(find "$SDS_LOCAL_OUTPUT_PATH" \
-              -type f \
-              -name '*.md')
-        
-            echo "Generated markdown files:"
-            echo "$SDS_FILES"
-        
-            COUNT=$(echo "$SDS_FILES" | grep -c . || true)
-        
-            echo "Markdown count: $COUNT"
-        
-            if [ "$COUNT" -eq 0 ]; then
-              echo "No markdown files generated."
-              exit 1
-            fi
-        
-            FINAL_FILE=$(echo "$SDS_FILES" | head -n 1)
-        
-            echo
-            echo "Using SDS file:"
-            echo "$FINAL_FILE"
-        
-            wc -c "$FINAL_FILE"
-        
-            echo
-            echo "SDS verification succeeded."
-          
+          echo
+          echo "SDS generation verified successfully."
 
       # =========================================================
-      # 6. PREPARE SRS LOCAL WORKSPACE
+      # 11. PREPARE SRS WORKSPACE
       # =========================================================
 
       - name: Prepare SRS local workspace
@@ -319,69 +418,55 @@ jobs:
         run: |
           set -euo pipefail
 
-          SRS_LOCAL_ROOT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_ROOT"
-          SRS_COMPONENT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_COMPONENT_PATH"
-          SRS_SDS_INPUT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_SDS_INPUT_PATH"
-          SRS_OUTPUT_ABS="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_OUTPUT_PATH"
+          SRS_ROOT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_ROOT"
+          SRS_COMPONENT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_COMPONENT_PATH"
+          SRS_SDS_INPUT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_SDS_INPUT_PATH"
+          SRS_OUTPUT="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_OUTPUT_PATH"
 
-          SDS_OUTPUT_ABS="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
+          SDS_OUTPUT="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH"
 
-          rm -rf "$SRS_LOCAL_ROOT_ABS"
+          rm -rf "$SRS_ROOT"
 
-          mkdir -p "$SRS_COMPONENT_ABS"
-          mkdir -p "$SRS_SDS_INPUT_ABS"
-          mkdir -p "$SRS_OUTPUT_ABS"
+          mkdir -p "$SRS_COMPONENT"
+          mkdir -p "$SRS_SDS_INPUT"
+          mkdir -p "$SRS_OUTPUT"
 
-          # Component kaynak kodunu SRS-RE çalışma dizinine kopyala.
           tar \
             --exclude='.git' \
             -C "$COMPONENT_CHECKOUT_PATH" \
             -cf - . \
             | tar \
-                -C "$SRS_COMPONENT_ABS" \
+                -C "$SRS_COMPONENT" \
                 -xf -
 
-          # Üretilen SDS dosyalarını SRS-RE input dizinine kopyala.
-          cp -a "$SDS_OUTPUT_ABS/." "$SRS_SDS_INPUT_ABS/"
+          cp -a "$SDS_OUTPUT/." "$SRS_SDS_INPUT/"
 
-          if [ ! -s "$SRS_COMPONENT_ABS/pom.xml" ]; then
-            echo "SRS component copy failed: pom.xml not found."
+          if [ ! -s "$SRS_COMPONENT/pom.xml" ]; then
+            echo "SRS component input copy failed."
             exit 1
           fi
 
-          SDS_INPUT_MARKDOWN_COUNT="$(
-            find "$SRS_SDS_INPUT_ABS" \
+          SDS_INPUT_COUNT="$(
+            find "$SRS_SDS_INPUT" \
               -type f \
               -name '*.md' \
               | wc -l \
               | tr -d ' '
           )"
 
-          if [ "$SDS_INPUT_MARKDOWN_COUNT" -eq 0 ]; then
-            echo "SRS SDS input directory contains no Markdown files."
+          if [ "$SDS_INPUT_COUNT" -eq 0 ]; then
+            echo "No SDS input was copied to SRS."
             exit 1
           fi
 
-          echo "SRS component path:"
-          realpath "$SRS_COMPONENT_ABS"
-
-          echo
-          echo "SRS SDS input path:"
-          realpath "$SRS_SDS_INPUT_ABS"
-
-          echo
-          echo "SRS output path:"
-          realpath "$SRS_OUTPUT_ABS"
-
-          echo
-          echo "SDS input files copied for SRS:"
-          find "$SRS_SDS_INPUT_ABS" \
+          echo "SDS files provided to SRS:"
+          find "$SRS_SDS_INPUT" \
             -type f \
             -print \
             | sort
 
       # =========================================================
-      # 7. GENERATE SRS
+      # 12. SRS SOURCE SCAN
       # =========================================================
 
       - name: Run SRS-RE source scan
@@ -392,21 +477,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Current working directory:"
-          pwd
-
-          echo
-          echo "Component path:"
-          realpath "$SRS_LOCAL_COMPONENT_PATH"
-
-          echo
-          echo "SDS input path:"
-          realpath "$SRS_LOCAL_SDS_INPUT_PATH"
-
-          echo
-          echo "SRS output path:"
-          realpath "$SRS_LOCAL_OUTPUT_PATH"
-
           opencode run \
             "/scan-source --path $SRS_LOCAL_COMPONENT_PATH --sds-output $SRS_LOCAL_SDS_INPUT_PATH --output $SRS_LOCAL_OUTPUT_PATH" \
             --agent srs-re-lead-agent \
@@ -414,11 +484,16 @@ jobs:
 
           echo
           echo "Files after SRS source scan:"
+
           find "$SRS_LOCAL_OUTPUT_PATH" \
             -type f \
             -print \
             | sort \
             || true
+
+      # =========================================================
+      # 13. GENERATE SRS
+      # =========================================================
 
       - name: Generate Reference SRS
         shell: bash
@@ -435,24 +510,8 @@ jobs:
             --model "ollama-cloud/$OLLAMA_MODEL"
 
           echo
-          echo "Files after SRS generation:"
-          find "$SRS_LOCAL_OUTPUT_PATH" \
-            -type f \
-            -print \
-            | sort \
-            || true
+          echo "Files in SRS output directory:"
 
-      # =========================================================
-      # 8. VERIFY SRS OUTPUT
-      # =========================================================
-
-      - name: Inspect generated SRS files
-        shell: bash
-        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
-        run: |
-          set -euo pipefail
-
-          echo "Files in expected SRS output directory:"
           find "$SRS_LOCAL_OUTPUT_PATH" \
             -type f \
             -print \
@@ -460,13 +519,102 @@ jobs:
             || true
 
           echo
-          echo "All Markdown files under SRS local workspace:"
-          find "$SRS_LOCAL_ROOT" \
+          echo "Possible final SRS files in framework root:"
+
+          find . \
+            -maxdepth 1 \
             -type f \
-            -name '*.md' \
+            -iname '*SRS*.md' \
             -print \
             | sort \
             || true
+
+      # =========================================================
+      # 14. COLLECT FINAL SRS
+      # =========================================================
+
+      - name: Collect final SRS
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        run: |
+          set -euo pipefail
+
+          FINAL_SRS=""
+
+          FINAL_SRS="$(
+            find "$SRS_LOCAL_OUTPUT_PATH" \
+              -maxdepth 1 \
+              -type f \
+              \( \
+                -iname 'FINAL_SRS.md' \
+                -o -iname 'SRS.md' \
+                -o -iname 'SRS_*Final*.md' \
+                -o -iname 'SRS_*.md' \
+              \) \
+              | head -n 1
+          )"
+
+          if [ -z "$FINAL_SRS" ]; then
+            FINAL_SRS="$(
+              find . \
+                -maxdepth 1 \
+                -type f \
+                \( \
+                  -iname 'FINAL_SRS.md' \
+                  -o -iname 'SRS.md' \
+                  -o -iname 'SRS_*Final*.md' \
+                  -o -iname 'SRS_*.md' \
+                \) \
+                | head -n 1
+            )"
+          fi
+
+          if [ -z "$FINAL_SRS" ]; then
+            echo "No consolidated SRS file was found."
+
+            echo
+            echo "Available SRS files:"
+            find "$SRS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -print \
+              | sort \
+              || true
+
+            echo
+            echo "Markdown files in SRS framework root:"
+            find . \
+              -maxdepth 1 \
+              -type f \
+              -name '*.md' \
+              -print \
+              | sort \
+              || true
+
+            exit 1
+          fi
+
+          echo "Final SRS found:"
+          echo "$FINAL_SRS"
+
+          case "$FINAL_SRS" in
+            "$SRS_LOCAL_OUTPUT_PATH"/*)
+              echo "Final SRS is already inside SRS output."
+              ;;
+            *)
+              cp "$FINAL_SRS" "$SRS_LOCAL_OUTPUT_PATH/FINAL_SRS.md"
+              FINAL_SRS="$SRS_LOCAL_OUTPUT_PATH/FINAL_SRS.md"
+              ;;
+          esac
+
+          echo
+          echo "Normalized final SRS:"
+          echo "$FINAL_SRS"
+
+          wc -c "$FINAL_SRS"
+
+      # =========================================================
+      # 15. VERIFY SRS
+      # =========================================================
 
       - name: Verify SRS output
         shell: bash
@@ -482,43 +630,26 @@ jobs:
               | tr -d ' '
           )"
 
-          echo "SRS Markdown file count: $SRS_MARKDOWN_COUNT"
+          echo "SRS Markdown count: $SRS_MARKDOWN_COUNT"
 
           if [ "$SRS_MARKDOWN_COUNT" -eq 0 ]; then
-            echo "No SRS Markdown files were generated."
-
-            echo
-            echo "All files under SRS local workspace:"
-            find "$SRS_LOCAL_ROOT" \
-              -type f \
-              -print \
-              | sort \
-              || true
-
+            echo "No SRS Markdown files generated."
             exit 1
           fi
 
           echo
-          echo "Generated SRS documents:"
+          echo "Generated SRS files:"
+
           find "$SRS_LOCAL_OUTPUT_PATH" \
             -type f \
-            -name '*.md' \
             -print \
             | sort
 
           echo
-          echo "SRS document sizes:"
-          find "$SRS_LOCAL_OUTPUT_PATH" \
-            -type f \
-            -name '*.md' \
-            -exec wc -c {} \; \
-            | sort -n
-
-          echo
-          echo "SRS generation completed successfully."
+          echo "SRS generation verified successfully."
 
       # =========================================================
-      # 9. UPLOAD SDS AND SRS ARTIFACTS
+      # 16. UPLOAD SDS ARTIFACT
       # =========================================================
 
       - name: Upload SDS artifacts
@@ -529,6 +660,10 @@ jobs:
             workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/sds-output/**
           if-no-files-found: error
           retention-days: 7
+
+      # =========================================================
+      # 17. UPLOAD SRS ARTIFACT
+      # =========================================================
 
       - name: Upload SRS artifacts
         uses: actions/upload-artifact@v4
