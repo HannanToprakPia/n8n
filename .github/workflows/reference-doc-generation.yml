@@ -56,28 +56,35 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Searching for generate-re-sds command definitions..."
+          echo "Searching for generate-re-sds and scan-source command definitions..."
           echo
 
-          echo "Files matching generate-re-sds:"
+          echo "Matching files:"
           find . \
             -type f \
-            \( -iname '*generate-re-sds*' -o -iname '*scan-source*' \) \
+            \( \
+              -iname '*generate-re-sds*' \
+              -o -iname '*scan-source*' \
+            \) \
             -print \
             | sort \
             || true
 
           echo
-          echo "Command directories and files:"
+          echo "Command-related files:"
           find . \
             -type f \
-            \( -path '*/commands/*' -o -path '*/.opencode/command/*' -o -path '*/.opencode/commands/*' \) \
+            \( \
+              -path '*/commands/*' \
+              -o -path '*/.opencode/command/*' \
+              -o -path '*/.opencode/commands/*' \
+            \) \
             -print \
             | sort \
             || true
 
           echo
-          echo "OpenCode-related files:"
+          echo "OpenCode configuration files:"
           find . \
             -maxdepth 4 \
             -type f \
@@ -125,6 +132,11 @@ jobs:
           if [ ! -s "$SOURCE_SCAN" ]; then
             echo "Source scan output was not generated:"
             echo "$SOURCE_SCAN"
+
+            echo
+            echo "Current re-output files:"
+            find re-output -type f -print | sort || true
+
             exit 1
           fi
 
@@ -148,11 +160,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          SDS_FILE="re-output/sds/sds.md"
+          SDS_DIR="re-output/sds"
+          SDS_MAIN_FILE="$SDS_DIR/README.md"
 
-          if [ ! -s "$SDS_FILE" ]; then
-            echo "Reference SDS was not generated:"
-            echo "$SDS_FILE"
+          if [ ! -d "$SDS_DIR" ]; then
+            echo "SDS output directory was not generated:"
+            echo "$SDS_DIR"
+            exit 1
+          fi
+
+          if [ ! -s "$SDS_MAIN_FILE" ]; then
+            echo "Main SDS document was not generated:"
+            echo "$SDS_MAIN_FILE"
 
             echo
             echo "Files currently available under re-output:"
@@ -161,13 +180,40 @@ jobs:
             exit 1
           fi
 
-          echo "Reference SDS generated successfully:"
-          echo "$SDS_FILE"
-          echo "Character count: $(wc -c < "$SDS_FILE")"
+          REQUIRED_FILES=(
+            "$SDS_DIR/README.md"
+            "$SDS_DIR/source-scan.md"
+            "$SDS_DIR/architecture.md"
+            "$SDS_DIR/api-endpoints.md"
+            "$SDS_DIR/file-inventory.md"
+          )
+
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -s "$file" ]; then
+              echo "Required SDS output is missing or empty:"
+              echo "$file"
+              exit 1
+            fi
+          done
+
+          echo "Reference SDS generated successfully."
+          echo
+          echo "Generated SDS files:"
+
+          find "$SDS_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name '*.md' \
+            -print \
+            | sort
 
           echo
-          echo "First 20 lines:"
-          head -20 "$SDS_FILE"
+          echo "Main document character count:"
+          wc -c < "$SDS_MAIN_FILE"
+
+          echo
+          echo "First 20 lines of README.md:"
+          head -20 "$SDS_MAIN_FILE"
 
       - name: Inspect generated files
         shell: bash
@@ -175,15 +221,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Generated files:"
+          echo "Generated files under re-output:"
 
-          find . \
+          find re-output \
             -type f \
-            \( \
-              -iname '*sds*.md' \
-              -o -path '*/re-output/*' \
-              -o -path '*/output/*' \
-            \) \
             -print \
             | sort
 
@@ -191,8 +232,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reference-sds-${{ inputs.component_name }}
-          path: |
-            component-source/re-output/**
-            component-source/output/**
+          path: component-source/re-output/sds/**
           if-no-files-found: error
           retention-days: 7
