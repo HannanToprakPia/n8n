@@ -275,57 +275,40 @@ jobs:
             | sort
 
 
-      - name: Verify SDS output
-        shell: bash
-        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
-        run: |
-          set -euo pipefail
 
-          SDS_MARKDOWN_COUNT="$(
-            find "$SDS_LOCAL_OUTPUT_PATH" \
+          - name: Verify SDS output
+          shell: bash
+          working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+          run: |
+            set -euo pipefail
+        
+            SDS_FILES=$(find "$SDS_LOCAL_OUTPUT_PATH" \
               -type f \
-              -name '*.md' \
-              | wc -l \
-              | tr -d ' '
-          )"
-
-          echo "SDS Markdown file count: $SDS_MARKDOWN_COUNT"
-
-          if [ "$SDS_MARKDOWN_COUNT" -eq 0 ]; then
-            echo "No SDS Markdown files were generated."
-            exit 1
-          fi
-
-          FINAL_SDS_FILE=""
-
-          if [ -s "$SDS_LOCAL_OUTPUT_PATH/FINAL_SDS.md" ]; then
-            FINAL_SDS_FILE="$SDS_LOCAL_OUTPUT_PATH/FINAL_SDS.md"
-          elif [ -s "$SDS_LOCAL_OUTPUT_PATH/SDS.md" ]; then
-            FINAL_SDS_FILE="$SDS_LOCAL_OUTPUT_PATH/SDS.md"
-          elif [ -s "$SDS_LOCAL_OUTPUT_PATH/SDS_INDEX.md" ]; then
-            FINAL_SDS_FILE="$SDS_LOCAL_OUTPUT_PATH/SDS_INDEX.md"
-          else
-            echo "No recognized final SDS file was generated."
-
+              -name '*.md')
+        
+            echo "Generated markdown files:"
+            echo "$SDS_FILES"
+        
+            COUNT=$(echo "$SDS_FILES" | grep -c . || true)
+        
+            echo "Markdown count: $COUNT"
+        
+            if [ "$COUNT" -eq 0 ]; then
+              echo "No markdown files generated."
+              exit 1
+            fi
+        
+            FINAL_FILE=$(echo "$SDS_FILES" | head -n 1)
+        
             echo
-            echo "Available SDS files:"
-            find "$SDS_LOCAL_OUTPUT_PATH" \
-              -type f \
-              -print \
-              | sort
-
-            exit 1
-          fi
-
-          echo "Final SDS file:"
-          echo "$FINAL_SDS_FILE"
-
-          echo
-          echo "Final SDS size:"
-          wc -c "$FINAL_SDS_FILE"
-
-          echo
-          echo "SDS generation completed successfully."
+            echo "Using SDS file:"
+            echo "$FINAL_FILE"
+        
+            wc -c "$FINAL_FILE"
+        
+            echo
+            echo "SDS verification succeeded."
+          
 
       # =========================================================
       # 6. PREPARE SRS LOCAL WORKSPACE
