@@ -1,0 +1,57 @@
+name: Reference Document Generation
+
+on:
+  workflow_dispatch:
+    inputs:
+      component_name:
+        description: Component full name
+        required: true
+        type: string
+
+      repository_owner:
+        description: Source repository owner
+        required: true
+        type: string
+
+      repository_name:
+        description: Source repository name
+        required: true
+        type: string
+
+      source_branch:
+        description: Source repository branch
+        required: true
+        default: develop
+        type: string
+
+jobs:
+  clone-component:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone component repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}
+          ref: ${{ inputs.source_branch }}
+          token: ${{ secrets.COMPONENT_REPO_TOKEN }}
+          path: component-source
+          fetch-depth: 1
+
+      - name: Verify repository
+        shell: bash
+        run: |
+          set -e
+
+          echo "Component: ${{ inputs.component_name }}"
+          echo "Repository: ${{ inputs.repository_owner }}/${{ inputs.repository_name }}"
+          echo "Branch: ${{ inputs.source_branch }}"
+
+          test -d component-source
+
+          echo "Clone successful"
+          echo "Commit SHA:"
+          git -C component-source rev-parse HEAD
+
+          echo "Repository files:"
+          find component-source -maxdepth 2 -type f | head -50
