@@ -274,6 +274,7 @@ jobs:
             -print \
             | sort
 
+
       - name: Verify SDS output
         shell: bash
         working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
@@ -295,11 +296,35 @@ jobs:
             exit 1
           fi
 
-          if [ ! -s "$SDS_LOCAL_OUTPUT_PATH/SDS_INDEX.md" ]; then
-            echo "SDS_INDEX.md was not generated."
+          FINAL_SDS_FILE=""
+
+          if [ -s "$SDS_LOCAL_OUTPUT_PATH/FINAL_SDS.md" ]; then
+            FINAL_SDS_FILE="$SDS_LOCAL_OUTPUT_PATH/FINAL_SDS.md"
+          elif [ -s "$SDS_LOCAL_OUTPUT_PATH/SDS.md" ]; then
+            FINAL_SDS_FILE="$SDS_LOCAL_OUTPUT_PATH/SDS.md"
+          elif [ -s "$SDS_LOCAL_OUTPUT_PATH/SDS_INDEX.md" ]; then
+            FINAL_SDS_FILE="$SDS_LOCAL_OUTPUT_PATH/SDS_INDEX.md"
+          else
+            echo "No recognized final SDS file was generated."
+
+            echo
+            echo "Available SDS files:"
+            find "$SDS_LOCAL_OUTPUT_PATH" \
+              -type f \
+              -print \
+              | sort
+
             exit 1
           fi
 
+          echo "Final SDS file:"
+          echo "$FINAL_SDS_FILE"
+
+          echo
+          echo "Final SDS size:"
+          wc -c "$FINAL_SDS_FILE"
+
+          echo
           echo "SDS generation completed successfully."
 
       # =========================================================
