@@ -170,7 +170,7 @@ jobs:
       # ---------------------------------------------------------
       # 5. Test Ollama Cloud
       # ---------------------------------------------------------
-            - name: Test Ollama Cloud
+      - name: Test Ollama Cloud
         shell: bash
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
