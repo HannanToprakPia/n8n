@@ -1,4 +1,4 @@
-name: Cognia RE SDS Agent Test
+name: Cognia RE SDS Local Workspace Test
 
 on:
   workflow_dispatch:
@@ -28,19 +28,23 @@ on:
 jobs:
   generate-reference-sds:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     env:
       OLLAMA_MODEL: gemma4:31b
 
-      COMPONENT_PATH: workspace/component-source
+      COMPONENT_CHECKOUT_PATH: workspace/component-source
       COGNIA_REPO_PATH: workspace/dnext-ai-rnd
       SDS_FRAMEWORK_PATH: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
-      SDS_OUTPUT_PATH: workspace/sds-output
+
+      # Bunlar SDS-RE çalışma dizininin altında kalır.
+      LOCAL_WORK_ROOT: .runner-work
+      LOCAL_COMPONENT_PATH: .runner-work/component-source
+      LOCAL_SDS_OUTPUT_PATH: .runner-work/sds-output
 
     steps:
       # ---------------------------------------------------------
-      # 1. Component repository
+      # 1. Component repository checkout
       # ---------------------------------------------------------
       - name: Checkout component repository
         uses: actions/checkout@v4
@@ -52,7 +56,7 @@ jobs:
           fetch-depth: 1
 
       # ---------------------------------------------------------
-      # 2. Cognia framework repository
+      # 2. Cognia framework repository checkout
       # ---------------------------------------------------------
       - name: Checkout Cognia RE framework repository
         uses: actions/checkout@v4
@@ -64,106 +68,107 @@ jobs:
           fetch-depth: 1
 
       # ---------------------------------------------------------
-      # 3. Verify repositories and agent definitions
+      # 3. Verify repositories, agent and commands
       # ---------------------------------------------------------
-      - name: Verify repositories and SDS agent
+      - name: Verify repositories and SDS framework
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ ! -d "$COMPONENT_PATH/.git" ]; then
+          if [ ! -d "$COMPONENT_CHECKOUT_PATH/.git" ]; then
             echo "Component repository checkout failed:"
-            echo "$COMPONENT_PATH"
+            echo "$COMPONENT_CHECKOUT_PATH"
             exit 1
           fi
 
           if [ ! -d "$COGNIA_REPO_PATH/.git" ]; then
-            echo "Cognia framework repository checkout failed:"
+            echo "Cognia framework checkout failed:"
             echo "$COGNIA_REPO_PATH"
             exit 1
           fi
 
-          AGENT_FILE="$SDS_FRAMEWORK_PATH/.opencode/agents/sds-re-lead-agent.md"
+          REQUIRED_FILES=(
+            "$SDS_FRAMEWORK_PATH/.opencode/agents/sds-re-lead-agent.md"
+            "$SDS_FRAMEWORK_PATH/.opencode/commands/scan-source.md"
+            "$SDS_FRAMEWORK_PATH/.opencode/commands/generate-re-sds.md"
+            "$SDS_FRAMEWORK_PATH/.opencode/commands/finalize-re-sds.md"
+          )
 
-          if [ ! -s "$AGENT_FILE" ]; then
-            echo "SDS-RE lead agent definition was not found:"
-            echo "$AGENT_FILE"
-
-            echo
-            echo "Available agent files:"
-            find "$COGNIA_REPO_PATH" \
-              -type f \
-              -path '*/.opencode/agents/*' \
-              -print \
-              | sort \
-              || true
-
-            exit 1
-          fi
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -s "$file" ]; then
+              echo "Required SDS-RE file is missing or empty:"
+              echo "$file"
+              exit 1
+            fi
+          done
 
           echo "Component repository:"
           echo "${{ inputs.repository_owner }}/${{ inputs.repository_name }}"
 
           echo
           echo "Component commit:"
-          git -C "$COMPONENT_PATH" rev-parse HEAD
+          git -C "$COMPONENT_CHECKOUT_PATH" rev-parse HEAD
 
           echo
           echo "Cognia framework commit:"
           git -C "$COGNIA_REPO_PATH" rev-parse HEAD
 
           echo
-          echo "SDS agent found:"
-          echo "$AGENT_FILE"
+          echo "Required agent and command files:"
+          printf '%s\n' "${REQUIRED_FILES[@]}"
 
       # ---------------------------------------------------------
-      # 4. Inspect SDS-RE framework
+      # 4. Copy component into SDS-RE working directory
       # ---------------------------------------------------------
-      - name: Inspect SDS-RE framework
+      - name: Prepare local SDS workspace
         shell: bash
         run: |
           set -euo pipefail
 
+          LOCAL_ROOT="$SDS_FRAMEWORK_PATH/$LOCAL_WORK_ROOT"
+          LOCAL_COMPONENT="$SDS_FRAMEWORK_PATH/$LOCAL_COMPONENT_PATH"
+          LOCAL_OUTPUT="$SDS_FRAMEWORK_PATH/$LOCAL_SDS_OUTPUT_PATH"
+
+          rm -rf "$LOCAL_ROOT"
+
+          mkdir -p "$LOCAL_COMPONENT"
+          mkdir -p "$LOCAL_OUTPUT"
+
+          # Component içeriğini kopyala; .git klasörünü taşıma.
+          tar \
+            --exclude='.git' \
+            -C "$COMPONENT_CHECKOUT_PATH" \
+            -cf - . \
+            | tar \
+                -C "$LOCAL_COMPONENT" \
+                -xf -
+
           echo "SDS-RE working directory:"
-          echo "$SDS_FRAMEWORK_PATH"
+          realpath "$SDS_FRAMEWORK_PATH"
 
           echo
-          echo "Agent files:"
-          find "$SDS_FRAMEWORK_PATH/.opencode/agents" \
+          echo "Local component path:"
+          realpath "$LOCAL_COMPONENT"
+
+          echo
+          echo "Local output path:"
+          realpath "$LOCAL_OUTPUT"
+
+          echo
+          echo "Copied component root files:"
+          find "$LOCAL_COMPONENT" \
             -maxdepth 1 \
             -type f \
             -print \
             | sort
 
-          echo
-          echo "Command files:"
-          find "$SDS_FRAMEWORK_PATH" \
-            -type f \
-            \( \
-              -path '*/commands/*' \
-              -o -path '*/.opencode/command/*' \
-              -o -path '*/.opencode/commands/*' \
-            \) \
-            -print \
-            | sort \
-            || true
+          if [ ! -s "$LOCAL_COMPONENT/pom.xml" ]; then
+            echo "Component copy validation failed: pom.xml not found."
+            exit 1
+          fi
 
       # ---------------------------------------------------------
-      # 5. Prepare output folder
-      # ---------------------------------------------------------
-      - name: Prepare SDS workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf "$SDS_OUTPUT_PATH"
-          mkdir -p "$SDS_OUTPUT_PATH"
-
-          echo "Output directory:"
-          realpath "$SDS_OUTPUT_PATH"
-
-      # ---------------------------------------------------------
-      # 6. Test Ollama Cloud
+      # 5. Test Ollama Cloud
       # ---------------------------------------------------------
       - name: Test Ollama Cloud
         shell: bash
@@ -208,7 +213,7 @@ jobs:
           echo "Model: $OLLAMA_MODEL"
 
       # ---------------------------------------------------------
-      # 7. Install OpenCode
+      # 6. Install OpenCode
       # ---------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -230,7 +235,7 @@ jobs:
           opencode --version
 
       # ---------------------------------------------------------
-      # 8. Configure OpenCode for Ollama Cloud
+      # 7. Configure OpenCode for Ollama Cloud
       # ---------------------------------------------------------
       - name: Configure OpenCode for Ollama Cloud
         shell: bash
@@ -272,8 +277,7 @@ jobs:
           echo "ollama-cloud/$OLLAMA_MODEL"
 
       # ---------------------------------------------------------
-      # 9. Run real SDS-RE scan command
-      # Working directory is critical: Cognia-RE/SDS-RE
+      # 8. Run actual SDS-RE source scan
       # ---------------------------------------------------------
       - name: Run SDS-RE source scan
         shell: bash
@@ -288,27 +292,62 @@ jobs:
 
           echo
           echo "Component path:"
-          realpath ../../../component-source
+          realpath "$LOCAL_COMPONENT_PATH"
 
           echo
           echo "Output path:"
-          realpath ../../../sds-output
+          realpath "$LOCAL_SDS_OUTPUT_PATH"
 
           opencode run \
-            "/scan-source --path ../../../component-source --output ../../../sds-output" \
+            "/scan-source --path $LOCAL_COMPONENT_PATH --output $LOCAL_SDS_OUTPUT_PATH" \
             --agent sds-re-lead-agent \
             --model "ollama-cloud/$OLLAMA_MODEL"
 
           echo
           echo "Files after source scan:"
-          find ../../../sds-output \
+          find "$LOCAL_SDS_OUTPUT_PATH" \
             -type f \
             -print \
             | sort \
             || true
 
       # ---------------------------------------------------------
-      # 10. Run real SDS generation command
+      # 9. Verify scan created persistent files
+      # ---------------------------------------------------------
+      - name: Verify SDS source scan
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        run: |
+          set -euo pipefail
+
+          FILE_COUNT="$(
+            find "$LOCAL_SDS_OUTPUT_PATH" \
+              -type f \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo "Source scan output file count: $FILE_COUNT"
+
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "Source scan did not produce any persistent files."
+
+            echo
+            echo "Files created under the local runner workspace:"
+            find "$LOCAL_WORK_ROOT" \
+              -type f \
+              -print \
+              | sort \
+              || true
+
+            exit 1
+          fi
+
+          echo
+          echo "Source scan completed successfully."
+
+      # ---------------------------------------------------------
+      # 10. Generate SDS
       # ---------------------------------------------------------
       - name: Generate Reference SDS
         shell: bash
@@ -325,68 +364,113 @@ jobs:
 
           echo
           echo "Files after SDS generation:"
-          find ../../../sds-output \
+          find "$LOCAL_SDS_OUTPUT_PATH" \
             -type f \
             -print \
             | sort \
             || true
 
       # ---------------------------------------------------------
-      # 11. Verify generated output
+      # 11. Search for all generated SDS files
       # ---------------------------------------------------------
-      - name: Verify SDS output
+      - name: Inspect generated SDS files
         shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
         run: |
           set -euo pipefail
 
-          if [ ! -d "$SDS_OUTPUT_PATH" ]; then
-            echo "SDS output directory does not exist:"
-            echo "$SDS_OUTPUT_PATH"
-            exit 1
-          fi
+          echo "Files in expected output directory:"
+          find "$LOCAL_SDS_OUTPUT_PATH" \
+            -type f \
+            -print \
+            | sort \
+            || true
 
-          FILE_COUNT="$(
-            find "$SDS_OUTPUT_PATH" \
-              -type f \
-              | wc -l \
-              | tr -d ' '
-          )"
+          echo
+          echo "Markdown files created anywhere under local workspace:"
+          find "$LOCAL_WORK_ROOT" \
+            -type f \
+            -name '*.md' \
+            -print \
+            | sort \
+            || true
+
+          echo
+          echo "Potential generated SDS files inside SDS-RE:"
+          find . \
+            -type f \
+            \( \
+              -iname 'SDS.md' \
+              -o -iname '*reference*sds*.md' \
+              -o -path '*/output/*' \
+              -o -path '*/progress/*' \
+              -o -path '*/drafts/*' \
+            \) \
+            -print \
+            | sort \
+            || true
+
+      # ---------------------------------------------------------
+      # 12. Verify final Markdown output
+      # ---------------------------------------------------------
+      - name: Verify SDS output
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        run: |
+          set -euo pipefail
 
           MARKDOWN_COUNT="$(
-            find "$SDS_OUTPUT_PATH" \
+            find "$LOCAL_SDS_OUTPUT_PATH" \
               -type f \
               -name '*.md' \
               | wc -l \
               | tr -d ' '
           )"
 
-          echo "Total output files: $FILE_COUNT"
-          echo "Markdown output files: $MARKDOWN_COUNT"
-
-          echo
-          echo "Generated files:"
-          find "$SDS_OUTPUT_PATH" \
-            -type f \
-            -print \
-            | sort \
-            || true
+          echo "Markdown files in expected output: $MARKDOWN_COUNT"
 
           if [ "$MARKDOWN_COUNT" -eq 0 ]; then
+            echo "No Markdown SDS output was generated in:"
+            echo "$LOCAL_SDS_OUTPUT_PATH"
+
             echo
-            echo "No Markdown SDS output was generated."
+            echo "All local workspace files:"
+            find "$LOCAL_WORK_ROOT" \
+              -type f \
+              -print \
+              | sort \
+              || true
+
             exit 1
           fi
+
+          echo
+          echo "Generated SDS documents:"
+          find "$LOCAL_SDS_OUTPUT_PATH" \
+            -type f \
+            -name '*.md' \
+            -print \
+            | sort
+
+          echo
+          echo "Document sizes:"
+          find "$LOCAL_SDS_OUTPUT_PATH" \
+            -type f \
+            -name '*.md' \
+            -exec wc -c {} \; \
+            | sort -n
 
           echo
           echo "SDS generation completed successfully."
 
       # ---------------------------------------------------------
-      # 12. Upload artifact
+      # 13. Upload output directly from SDS-RE local workspace
       # ---------------------------------------------------------
       - name: Upload SDS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cognia-reference-sds-${{ inputs.component_name }}
-          path: workspace/sds-output/**
+          path: |
+            workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/sds-output/**
           if-no-files-found: error
           retention-days: 7
