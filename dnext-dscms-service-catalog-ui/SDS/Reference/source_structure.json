@@ -1,0 +1,66 @@
+{
+  "project_overview": {
+    "name": "service-catalog-ui",
+    "version": "2.1.11",
+    "description": "DNext Service Catalog Management UI",
+    "primary_languages": ["TypeScript", "HTML", "SCSS"],
+    "frameworks": {
+      "frontend": "Angular 21.2.0",
+      "state_management": "RxJS"
+    },
+    "architectural_patterns": [
+      "Feature-based Module Structure",
+      "Core/Shared Pattern",
+      "Component-based Architecture",
+      "Service-oriented Data Access"
+    ],
+    "deployment": {
+      "containerization": "Docker",
+      "web_server": "Nginx",
+      "ci_cd": "Jenkins"
+    }
+  },
+  "source_structure_map": {
+    "core_business_logic": [
+      ".runner-work/component-source/src/app/features/candidates",
+      ".runner-work/component-source/src/app/features/catalogs",
+      ".runner-work/component-source/src/app/features/categories",
+      ".runner-work/component-source/src/app/features/specifications"
+    ],
+    "api_definition": [
+      ".runner-work/component-source/src/app/shared/services"
+    ],
+    "database_schema_entity_definitions": [
+      ".runner-work/component-source/src/app/shared/models"
+    ],
+    "configuration_files": [
+      ".runner-work/component-source/app-config.js",
+      ".runner-work/component-source/env-params.js",
+      ".runner-work/component-source/src/app/env-config.ts",
+      ".runner-work/component-source/angular.json",
+      ".runner-work/component-source/tsconfig.json"
+    ],
+    "frontend_components": [
+      ".runner-work/component-source/src/app/core/components",
+      ".runner-work/component-source/src/app/features",
+      ".runner-work/component-source/src/app/shared/components"
+    ],
+    "test_suites": [
+      ".runner-work/component-source/src/app/**/*.spec.ts"
+    ]
+  },
+  "detailed_analysis": {
+    "features": {
+      "candidates": "Management of service candidates",
+      "catalogs": "Management of service catalogs",
+      "categories": "Service categorization logic",
+      "specifications": "Detailed service specifications and characteristics"
+    },
+    "shared_layer": {
+      "services": "Generic and entity-specific API wrappers (e.g., base-crud.service.ts)",
+      "models": "TypeScript interfaces defining the domain entities",
+      "interceptors": "HTTP error handling and request modifications",
+      "i18n": "Internationalization support (English and Turkish)"
+    }
+  }
+}
