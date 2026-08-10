@@ -1,0 +1,13 @@
+{
+  "Introduction": "src/app/core",
+  "Architecture": "src/app/core",
+  "Package Structure": "src/app",
+  "Entities": "src/app/shared/models",
+  "Services": "src/app/shared/services",
+  "API Design": "src/app/shared/services",
+  "Database": "backend/database",
+  "Configuration": "src/app/env-config.ts",
+  "Testing": "src/app/**/*.spec.ts",
+  "Deployment": "docker/Dockerfile",
+  "Frontend": "src/app/features"
+}
