@@ -1,0 +1,41 @@
+{
+  "section1_introduction": [
+    ".runner-work/component-source/README.md",
+    ".runner-work/component-source/TMF633-Service-Catalog-v4.0.0-swagger.json"
+  ],
+  "section2_architecture": [
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/ServiceCatalogApplication.java"
+  ],
+  "section3_package_structure": [
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog"
+  ],
+  "section4_entities": [
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/entity",
+    ".runner-work/component-source/src/main/resources/static/schemas"
+  ],
+  "section5_services": [
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/service",
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/service/impl"
+  ],
+  "section6_api_design": [
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/api",
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/controller"
+  ],
+  "section7_database": [
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/repository"
+  ],
+  "section8_configuration": [
+    ".runner-work/component-source/src/main/resources/application.yml",
+    ".runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/config"
+  ],
+  "section9_testing": [
+    ".runner-work/component-source/src/test"
+  ],
+  "section10_deployment": [
+    ".runner-work/component-source/src/main/docker",
+    ".runner-work/component-source/src/main/jenkins/Jenkinsfile"
+  ],
+  "section11_frontend": [
+    ".runner-work/component-source/src/main/resources/static"
+  ]
+}
