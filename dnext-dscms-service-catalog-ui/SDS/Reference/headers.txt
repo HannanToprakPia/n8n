@@ -1,0 +1,76 @@
+# 1. Introduction
+### In-Scope
+### Out-of-Scope
+# Architecture
+## Architectural Overview
+## High-Level Component Diagram
+## Data Flow
+## Key Design Patterns
+## Technology Stack
+# 3. Package Structure
+├── core/                       # Singleton services, layout, and global components
+│   ├── components/             # Global UI components (Navbar, Sidebar, Breadcrumb)
+│   ├── constants/              # Application-wide constants
+│   └── layout/                 # Main application layout wrapper
+├── features/                   # Business logic divided by domain modules
+│   ├── candidates/             # Service candidate management
+│   ├── catalogs/               # Service catalog management
+│   ├── categories/             # Service categorization
+│   └── specifications/          # Service specifications and characteristics
+└── shared/                     # Reusable utilities, components, and models
+    ├── components/             # Generic UI components (Modals, Filters, Search)
+    ├── constants/              # Shared constants (Error/State mapping)
+    ├── directives/             # Custom Angular directives
+    ├── i18n/                   # Internationalization (en, tr)
+    ├── interceptors/           # HTTP interceptors
+    ├── models/                 # Domain entity interfaces
+    ├── pipes/                  # Custom Angular pipes
+    ├── services/               # Generic API wrappers and base CRUD services
+    ├── styles/                # Shared SCSS styles
+    ├── utilities/              # Helper functions and interfaces
+    └── validators/            # Custom form validators
+### Core Module (`core/`)
+### Shared Module (`shared/`)
+### Features Module (`features/`)
+# 4. Entities
+### ServiceCandidate
+### ServiceCategory
+### ServiceSpecification
+### ServiceCatalog
+# 5. Services
+### Common Methods
+### Generic Type Handling
+### CandidateService
+### CategoryService
+### CatalogService
+### SpecificationService
+# API Design
+### Service Candidate
+### Service Category
+### Service Catalog
+### Service Specification
+# 7. Database
+# Configuration
+## Configuration Architecture
+## Environment-Specific Settings
+### Infrastructure Parameters (`env-params.js`)
+### Application Settings (`app-config.js`)
+## Application Constants
+## Runtime Configuration
+## Internationalization (i18n) Config
+# Testing
+## Testing Strategy
+## Unit Testing Framework
+## Test Coverage Analysis
+## Mocking Strategy
+## Common Test Scenarios
+# 10. Deployment
+# Frontend
+## UI Framework & Component Library
+## Layout Structure
+## Key Pages & Workflows
+### List View
+### Create/Update View
+### Content/Detail View
+## State Management
+## Styling Strategy
