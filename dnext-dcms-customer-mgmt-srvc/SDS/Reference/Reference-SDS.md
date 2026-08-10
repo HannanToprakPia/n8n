@@ -1,336 +1,656 @@
-# Reference SDS — dnext-dscms-service-catalog-mgmt-srvc
+# 10 Deployment
 
-## 1. Document Control
+## 10.1 Deployment Overview
+The Service Catalog Management service follows a cloud-native, containerized deployment strategy. It is packaged as a Docker image and deployed within a Kubernetes environment, leveraging a microservices architecture.
 
-- **Document type**: Reference Software Design Specification
-- **Component name**: dnext-dscms-service-catalog-mgmt-srvc
-- **Source repository**: https://github.com/dnext-technology/dnext-dscms-service-catalog-mgmt-srvc
-- **Source branch**: develop
-- **Document status**: Reference Draft
-- **Generated date**: 2026-08-05
+## 10.2 CI/CD Pipeline
+The CI/CD process is managed via a Jenkins pipeline (`Jenkinsfile`) with the following stages:
+- **Init**: Initializes the Maven build pipeline.
+- **Build Base Docker Image**: Constructs the initial container image.
+- **Run Unit Tests**: Executes unit tests (conditional based on `RUN_UNITTESTS` environment variable).
+- **Sonar Coverage & Run Unit Tests**: Performs static code analysis and coverage reporting via SonarCloud (conditional based on `RUN_SONAR`).
+- **Detect Breaking Changes**: Checks for breaking changes on release branches.
+- **Build Final Docker Image**: Constructs the final production-ready container image.
+- **Scan Container Image**: Performs vulnerability scanning on `develop` and `release` branches.
+- **Push Docker Images**: Pushes the finalized image to the GitHub Container Registry (`ghcr.io`).
 
-## 2. Purpose and Scope
+## 10.3 Containerization
+The application is containerized using a multi-stage Docker build:
+- **Base Image**: The final runtime image is based on `eclipse-temurin:17.0.9_9-jre-focal`.
+- **User**: Runs under a non-privileged system user `javauser` for security.
+- **Entry Point**: The application is started using: `java -jar /app/app.jar`.
+- **Network**: Exposes port `8080` by default.
+- **Artifacts**: The JAR file is copied from a builder stage to `/app/app.jar`, and configuration files (`application.yml`, `pom.xml`) are stored in `/meta/`.
 
-### Purpose
-The Service Catalog Management API is designed to manage the entire lifecycle of service catalog elements, providing a centralized catalog of services. (Evidence: Component README)
+## 10.4 Infrastructure Requirements
+### Software Requirements
+- **Runtime**: Java 17 (JRE)
+- **Framework**: Spring Boot 3.5.15
+- **Build Tool**: Maven 3
+- **Database**: MongoDB
+- **Messaging**: Kafka
+- **Identity Provider**: Keycloak
 
-### Design Scope
-The scope includes the management of:
-- Service Catalogs
-- Service Categories
-- Service Candidates
-- Service Specifications
-- Import and Export jobs for catalog data
-- Event subscriptions and notifications for catalog changes. (Evidence: Swagger OpenAPI)
+### Hardware Requirements (Build Time)
+- **CPU**: 1750m (as specified in Kubernetes build pod)
+- **Memory**: 7Gi (as specified in Kubernetes build pod)
 
-### System Boundary
-The component acts as a standalone management service (port 8083) providing a TMF633 compliant API to external consumers and integrating with persistence and messaging layers. (Evidence: Component README, Swagger OpenAPI)
+## 10.5 Deployment Environments
+The pipeline supports multiple target environments based on the branch type:
+- **Development/Test**: Triggered by `develop` branches; includes vulnerability scanning.
+- **Release/Production**: Triggered by `release` branches; includes breaking change detection and vulnerability scanning.
+- **Registry**: All images are hosted on `ghcr.io`.
+# 11. Frontend
 
-### Excluded Concerns
-- Frontend implementation.
-- Detailed internal business logic for "creation rules" or "updating rules" (mentioned as goals but not detailed in the API spec).
-- Infrastructure orchestration.
+## 11.1 Frontend Status
+The project does not have an integrated frontend. The component is a backend-only API.
 
-## 3. Architectural Overview
+## 11.2 API Consumption
+The API is consumed as a RESTful service. Based on the project root, it provides a Swagger/OpenAPI specification file (`TMF633-Service-Catalog-v4.0.0-swagger.json`) for API documentation and client generation.
+# 1. Introduction
 
-### Architectural Style
-The component follows a RESTful API architectural style, implementing the TMF633 (TM Forum) standard for Service Catalog Management. (Evidence: Swagger OpenAPI)
+## 1.1 Project Overview
+The Service Catalog Management system is a Java-based microservice developed using Spring Boot 3.5.15. It provides a comprehensive API for managing the entire lifecycle of service catalog elements, enabling the organization to define, manage, and maintain its offerings of services. The system leverages MongoDB for data persistence and Kafka for event-driven communication.
 
-### Main Runtime Responsibilities
-- **CRUD Operations**: Managing the lifecycle of catalog entities (Retrieve, Create, Partial Update, Delete). (Evidence: Swagger OpenAPI)
-- **Batch Processing**: Managing the import and export of catalog resources via jobs. (Evidence: Swagger OpenAPI)
-- **Event Notification**: Managing a hub for event subscriptions and delivering notifications to registered listeners. (Evidence: Swagger OpenAPI)
+## 1.2 Goals and Objectives
+The primary objective of the system is to provide a standardized interface for Service Catalog Management, aligning with the TMF633 Open API specification. The system aims to:
+- Enable the full lifecycle management of service catalog elements.
+- Ensure interoperability through adherence to TMF633 standards (as referenced in `TMF633-Service-Catalog-v4.0.0-swagger.json`).
+- Provide a scalable architecture for cataloging services in a telecom-aligned environment.
 
-### Main Logical Layers
-Based on the `pom.xml` and Swagger definitions, the system is structured into:
-- **API Layer**: Handles REST requests and responses.
-- **Service/Application Layer**: Orchestrates business logic.
-- **Persistence Layer**: Interfaces with MongoDB. (Evidence: pom.xml)
-- **Integration Layer**: Handles external event notifications and ID generation. (Evidence: pom.xml, Swagger OpenAPI)
+## 1.3 Scope
+The scope of this component includes:
+- **REST API Layer**: Controllers and request DTOs for managing catalog elements (`com.pia.orbitant.servicecatalog.api`).
+- **Business Logic**: Implementation of service catalog management rules (`com.pia.orbitant.servicecatalog.service`).
+- **Data Access**: Repository patterns for MongoDB interaction (`com.pia.orbitant.servicecatalog.repository`) and domain entity definitions (`com.pia.orbitant.servicecatalog.data`).
+- **Event Handling**: Architecture for publishing and consuming catalog-related events (`com.pia.orbitant.servicecatalog.event`).
+- **Data Migration**: Logic for updating and migrating catalog data (`com.pia.orbitant.servicecatalog.migration`).
 
-### External Dependencies
-- **MongoDB**: For data persistence. (Evidence: pom.xml)
-- **Kafka**: Evidenced via test containers, implying an event-driven integration. (Evidence: pom.xml)
-- **Keycloak**: Evidenced via test containers, implying identity and access management. (Evidence: pom.xml)
+## 1.4 Intended Audience
+This document is intended for:
+- **Software Developers**: To understand the internal architecture and implementation details for maintenance and extension.
+- **System Architects**: To review the alignment with TMF633 and the overall structural design.
+- **QA Engineers**: To design test cases based on the described system behavior and API endpoints.
+- **DevOps Engineers**: To understand the technology stack and deployment requirements.
 
-### API-driven Responsibilities
-The service is primarily driven by its OpenAPI specification, providing endpoints for catalog management, job tracking, and event hub registration. (Evidence: Swagger OpenAPI)
+## 1.5 Document Conventions
+### 1.5.1 Key Terms
+| Term | Definition |
+| :--- | :--- |
+| **TMF633** | TeleManagement Forum API for Service Catalog Management. |
+| **SC** | Service Catalog (Short name for the service). |
+| **DTO** | Data Transfer Object. |
+| **Lifecycle Management** | The process of managing an entity from creation through modification to retirement. |
 
-## 4. Technology Stack
+### 1.5.2 Formatting
+- **Code references**: Package names and class names are presented in `monospace` font.
+- **API Endpoints**: Represented as URL paths (e.g., `/api/serviceCatalogManagement/v4/`).
+# 2. Architecture
 
-| Technology or Dependency | Purpose | Version | Evidence Source |
+## 2.1 Architectural Pattern
+The Service Catalog Management system follows a **Layered Architecture** pattern. This pattern is chosen to ensure a clear separation of concerns, facilitating maintainability and scalability of the service catalog lifecycle management.
+
+**Justification & Evidence:**
+The codebase is organized into distinct packages that represent architectural layers:
+- **API Layer**: `com.pia.orbitant.servicecatalog.api` contains REST controllers (e.g., `ServiceCatalogApi.java`) that handle HTTP requests and responses.
+- **Service Layer**: `com.pia.orbitant.servicecatalog.service` contains business logic. Implementations like `ServiceCatalogServiceImpl.java` orchestrate the flow between the API and data layers.
+- **Repository Layer**: `com.pia.orbitant.servicecatalog.repository` provides data access abstraction (e.g., `ServiceCatalogRepository.java` extending `BaseRepository`).
+- **Event Layer**: `com.pia.orbitant.servicecatalog.event` handles asynchronous communication and event creation (e.g., `EventCreator.java`).
+
+## 2.2 Component Diagram
+The following Mermaid diagram describes the interaction between the architectural layers:
+
+```mermaid
+graph TD
+    Client[Client/External System] --> API[API Layer]
+    API --> Service[Service Layer]
+    Service --> Repo[Repository Layer]
+    Repo --> DB[(MongoDB)]
+    Service --> Event[Event Layer]
+    Event --> Kafka[Kafka Message Broker]
+```
+
+## 2.3 Data Flow
+### Request-Response Flow
+1. **Entry**: A client sends an HTTP request to an endpoint defined in the API layer (e.g., `POST /serviceCatalog` in `ServiceCatalogApi.java`).
+2. **Processing**: The API layer delegates the request to the Service layer (e.g., `ServiceCatalogServiceImpl.createServiceCatalog`).
+3. **Persistence**: The Service layer performs business validation and uses the Repository layer (e.g., `ServiceCatalogRepository.save()`) to persist data into MongoDB.
+4. **Return**: The persisted entity is returned through the Service and API layers back to the client as a JSON response.
+
+### Event Triggering Flow
+- After a successful state-changing operation (Create, Update, Delete) or a retrieval operation, the Service layer calls the `EventService` using events generated by `EventCreator` (e.g., `eventService.create(EventCreator.createServiceCatalogCreateEvent(serviceCatalog))` in `ServiceCatalogServiceImpl.java:73`).
+- These events are then published to the Kafka message broker for consumption by other system components.
+
+## 2.4 Technology Stack Justification
+- **Spring Boot 3.5.15**: Used as the core framework to provide rapid application development, dependency injection, and seamless integration with Spring Data MongoDB and Spring Kafka.
+- **MongoDB**: Utilized as the primary database to handle the flexible schema requirements of service catalog entities, as evidenced by the use of `com.pia.orbitant.common.mongo` and `VersioningRepositoryForName`.
+- **Kafka**: Employed for event-driven communication, enabling the system to notify other services of changes in the service catalog asynchronously.
+
+## 2.5 Integration Points
+- **Keycloak**: Used for identity and access management (IAM), verified by `testcontainers-keycloak` in the project configuration.
+- **Camunda**: Integrated for business process orchestration, as referenced in the project README.
+- **Common Core Libraries**: Integration with `com.pia.orbitant.common.core` for cross-cutting concerns like `AccessPolicyService`, `BusinessValidationService`, and `EventService`.
+# 3. Package Structure
+
+## 3.1 Package Hierarchy Map
+```text
+com.pia.orbitant.servicecatalog
+├── api
+│   └── request
+├── controller
+├── service
+│   └── impl
+├── repository
+├── entity
+│   ├── servicecatalog
+│   ├── servicecandidate
+│   ├── servicecategory
+│   ├── job
+│   └── servicespecification
+├── validator
+│   ├── servicecatalog
+│   │   ├── common
+│   │   ├── patch
+│   │   └── post
+│   ├── servicecandidate
+│   │   ├── common
+│   │   ├── patch
+│   │   ├── delete
+│   │   └── post
+│   ├── servicecategory
+│   │   ├── common
+│   │   ├── patch
+│   │   ├── delete
+│   │   └── post
+│   ├── helper
+│   └── servicespecification
+│       ├── common
+│       ├── patch
+│       ├── delete
+│       └── post
+├── event
+│   ├── servicecatalog
+│   │   └── payload
+│   ├── servicecandidate
+│   │   └── payload
+│   ├── servicecategory
+│   │   └── payload
+│   └── servicespecification
+│       └── payload
+├── migration
+│   ├── versioning
+│   ├── importjob
+│   ├── util
+│   ├── aspect
+│   ├── servicecatalog
+│   ├── servicecandidate
+│   ├── servicecategory
+│   ├── exportjob
+│   ├── servicespecification
+│   └── exception
+├── data
+├── config
+└── util
+    └── validation
+```
+
+## 3.2 Package Responsibility Table
+
+| Package | Primary Purpose |
+| :--- | :--- |
+| `com.pia.orbitant.servicecatalog.api` | Defines REST API request DTOs and external interface contracts. |
+| `com.pia.orbitant.servicecatalog.controller` | REST API endpoints handling incoming HTTP requests and routing to services. |
+| `com.pia.orbitant.servicecatalog.service` | Business logic interfaces and their implementations (`.impl`). |
+| `com.pia.orbitant.servicecatalog.repository` | Data access layer for MongoDB persistence. |
+| `com.pia.orbitant.servicecatalog.entity` | Domain models and MongoDB document entities. |
+| `com.pia.orbitant.servicecatalog.validator` | Request validation logic categorized by entity and operation (post, patch, delete). |
+| `com.pia.orbitant.servicecatalog.event` | Event-driven messaging components and payloads for asynchronous communication. |
+| `com.pia.orbitant.servicecatalog.migration` | Logic for data import/export and versioning migrations. |
+| `com.pia.orbitant.servicecatalog.config` | Application and framework configuration settings. |
+| `com.pia.orbitant.servicecatalog.util` | General utility and helper classes. |
+
+## 3.3 Dependency Graph
+The application follows a layered architectural pattern:
+
+```mermaid
+graph TD
+    Controller[controller] --> Service[service]
+    Service --> Repository[repository]
+    Service --> Validator[validator]
+    Service --> Event[event]
+    Repository --> Entity[entity]
+    Service --> Entity[entity]
+    Migration[migration] --> Service[service]
+    Migration[migration] --> Repository[repository]
+    Controller --> API[api/request]
+```
+
+**Dependency Flow:**
+`api/request` $\rightarrow$ `controller` $\rightarrow$ `service` $\rightarrow$ (`repository` | `validator` | `event`) $\rightarrow$ `entity`
+
+## 3.4 Key Class Locations
+
+| Critical Class | Package |
+| :--- | :--- |
+| `ServiceCatalogApplication` | `com.pia.orbitant.servicecatalog` |
+| `ServiceCatalogApiController` | `com.pia.orbitant.servicecatalog.controller` |
+| `ServiceCatalogService` | `com.pia.orbitant.servicecatalog.service` |
+| `ServiceCatalogRepository` | `com.pia.orbitant.servicecatalog.repository` |
+| `ServiceCatalog` | `com.pia.orbitant.servicecatalog.entity.servicecatalog` |
+| `ImportJobApiController` | `com.pia.orbitant.servicecatalog.controller` |
+| `ExportJobService` | `com.pia.orbitant.servicecatalog.service` |
+# 4. Entities
+
+## 4.1 Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    ServiceCatalog ||--o{ ServiceCategory : "associated with"
+    ServiceCatalog ||--o{ ServiceCandidate : "contains"
+    ServiceCategory ||--o{ ServiceCandidate : "groups"
+    ServiceCategory ||--o{ ServiceCategory : "contains (child)"
+    ServiceCandidate ||--|| ServiceSpecification : "implements"
+    ServiceSpecification ||--o{ ServiceSpecification : "bundled in / related to"
+    ImportJob ||--o| ServiceSpecification : "imports"
+    ExportJob ||--o| ServiceSpecification : "exports"
+```
+
+## 4.2 Entity Detail Tables
+
+### ServiceCatalog
+**MongoDB Collection:** `service-catalog`
+
+| Field Name | Type | Description | Constraints |
 | :--- | :--- | :--- | :--- |
-| JDK | Runtime Environment | 17 (pom.xml) / 1.8 (README) | pom.xml / README |
-| Spring Boot | Application Framework | 3.5.15 | pom.xml |
-| Maven | Build Tool | 3 | README |
-| MongoDB | Database | Not specified | pom.xml (`common-mongo`) |
-| Kafka | Messaging/Events | Not specified | pom.xml (testcontainers) |
-| Keycloak | IAM/Security | Not specified | pom.xml (testcontainers) |
-| QueryDSL | Type-safe SQL/Mongo queries | Not specified | pom.xml (`apt-maven-plugin`) |
-| Jacoco | Code Coverage | 0.8.15 | pom.xml |
+| id | String | Unique identifier | Primary Key (inherited) |
+| category | List\<ServiceCategoryRef\> | List of associated service categories | - |
+| relatedParty | List\<RelatedParty\> | Parties or roles related to this catalog | - |
+| catalogType | String | Identifier of the type of catalog | - |
 
-## 5. Component Decomposition
+### ServiceCategory
+**MongoDB Collection:** `service-category`
 
-### API Layer
-- **Responsibility**: Expose TMF633 compliant REST endpoints, handle request validation, and map internal models to API schemas.
-- **Inputs**: JSON requests, Query parameters (fields, offset, limit).
-- **Outputs**: JSON responses, HTTP status codes.
-- **Dependencies**: Application Layer.
-- **Evidence status**: Evidenced (Swagger OpenAPI).
+| Field Name | Type | Description | Constraints |
+| :--- | :--- | :--- | :--- |
+| id | String | Unique identifier | Primary Key (inherited) |
+| isRoot | Boolean | Indicates if this is a root category | - |
+| parentId | String | Unique identifier of the parent category | - |
+| parent | ServiceCategoryRef | Reference to the parent category | - |
+| category | List\<ServiceCategoryRef\> | List of child categories | - |
+| serviceCandidate | List\<ServiceCandidateRef\> | List of associated service candidates | - |
 
-### Application/Service Layer
-- **Responsibility**: Implement business logic for catalog lifecycle, job management, and event dispatching.
-- **Inputs**: DTOs from API layer.
-- **Outputs**: Domain entities or API responses.
-- **Dependencies**: Domain Layer, Persistence Layer.
-- **Evidence status**: Inferred from standard Spring Boot architecture and pom.xml.
+### ServiceCandidate
+**MongoDB Collection:** `service-candidate`
 
-### Domain Layer
-- **Responsibility**: Define the core business entities (ServiceCatalog, ServiceSpecification, etc.) and their relationships.
-- **Inputs**: Data from persistence.
-- **Outputs**: Validated domain objects.
-- **Dependencies**: None.
-- **Evidence status**: Evidenced (Swagger definitions).
+| Field Name | Type | Description | Constraints |
+| :--- | :--- | :--- | :--- |
+| id | String | Unique identifier | Primary Key (inherited) |
+| category | List\<ServiceCategoryRef\> | List of categories for this candidate | - |
+| serviceSpecification | ServiceSpecificationRef | The specification implied by this candidate | - |
 
-### Persistence Layer
-- **Responsibility**: Provide CRUD access to MongoDB.
-- **Inputs**: Domain entities.
-- **Outputs**: Persisted records.
-- **Dependencies**: `common-mongo`.
-- **Evidence status**: Evidenced (pom.xml).
+### ServiceSpecification
+**MongoDB Collection:** `service-specification`
 
-### Integration Layer
-- **Responsibility**: Manage ID generation and event notification delivery to external callbacks.
-- **Inputs**: Event triggers, ID requests.
-- **Outputs**: HTTP callbacks, Unique IDs.
-- **Dependencies**: `id-generator`, `access-control`.
-- **Evidence status**: Evidenced (pom.xml, Swagger OpenAPI).
+| Field Name | Type | Description | Constraints |
+| :--- | :--- | :--- | :--- |
+| id | String | Unique identifier | Primary Key (inherited) |
+| isBundle | Boolean | Whether it represents a bundle of specifications | - |
+| attachment | List\<AttachmentRefOrValue\> | Relevant attachments (pictures, docs) | - |
+| constraint | List\<ConstraintRef\> | Applied constraint references | - |
+| bundledServiceSpecification | List\<BundledServiceSpecification\> | Grouping of service specifications | - |
+| entitySpecRelationship | List\<EntitySpecificationRelationship\> | Relationship to another specification | - |
+| featureSpecification | List\<FeatureSpecification\> | List of features for this specification | - |
+| relatedParty | List\<RelatedParty\> | Parties managing the specification | - |
+| resourceSpecification | List\<ResourceSpecificationRef\> | Resource specifications (for RFSS) | - |
+| serviceLevelSpecification | List\<ServiceLevelSpecificationRef\> | Related service level specifications | - |
+| serviceSpecRelationship | List\<ServiceSpecRelationship\> | Related specifications (migration, etc.) | - |
+| specCharacteristic | List\<CharacteristicSpecification\> | Characteristics the entity can take | - |
+| targetEntitySchema | TargetEntitySchema | Pointer to target entity schema | - |
+| pExtension | ServiceSpecificationExtension | Extended model attributes | - |
 
-## 6. API Design
+### ImportJob
+**MongoDB Collection:** `import-job`
 
-### Service Catalog Management
-| Method | Path | Purpose | Request Model | Response Model | Status Codes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| GET | `/serviceCatalog` | List/Find catalogs | Query params | `ServiceCatalog[]` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| POST | `/serviceCatalog` | Create catalog | `ServiceCatalog_Create` | `ServiceCatalog` | 201, 400, 401, 403, 405, 409, 500 |
-| GET | `/serviceCatalog/{id}` | Retrieve by ID | Path ID | `ServiceCatalog` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| PATCH | `/serviceCatalog/{id}` | Partial update | `ServiceCatalog_Update` | `ServiceCatalog` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| DELETE | `/serviceCatalog/{id}` | Delete catalog | Path ID | None | 204, 400, 401, 403, 404, 405, 409, 500 |
+| Field Name | Type | Description | Constraints |
+| :--- | :--- | :--- | :--- |
+| id | String | Identifier of the import job | Primary Key |
+| href | String | Reference of the import job | - |
+| completionDate | OffsetDateTime | Date at which the job was completed | - |
+| contentType | String | Format of the imported data | - |
+| creationDate | OffsetDateTime | Date at which the job was created | - |
+| errorLog | String | Reason for failure if status is failed | - |
+| path | String | URL of the root resource for application | - |
+| url | String | URL of the file containing data | - |
+| status | String | Status (not started, running, succeeded, failed) | - |
 
-### Service Category Management
-| Method | Path | Purpose | Request Model | Response Model | Status Codes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| GET | `/serviceCategory` | List categories | Query params | `ServiceCategory[]` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| POST | `/serviceCategory` | Create category | `ServiceCategory_Create` | `ServiceCategory` | 201, 400, 401, 403, 405, 409, 500 |
-| GET | `/serviceCategory/{id}` | Retrieve by ID | Path ID | `ServiceCategory` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| PATCH | `/serviceCategory/{id}` | Partial update | `ServiceCategory_Update` | `ServiceCategory` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| DELETE | `/serviceCategory/{id}` | Delete category | Path ID | None | 204, 400, 401, 403, 404, 405, 409, 500 |
+### ExportJob
+**MongoDB Collection:** `export-job`
 
-### Service Candidate Management
-| Method | Path | Purpose | Request Model | Response Model | Status Codes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| GET | `/serviceCandidate` | List candidates | Query params | `ServiceCandidate[]` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| POST | `/serviceCandidate` | Create candidate | `ServiceCandidate_Create` | `ServiceCandidate` | 201, 400, 401, 403, 405, 409, 500 |
-| GET | `/serviceCandidate/{id}` | Retrieve by ID | Path ID | `ServiceCandidate` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| PATCH | `/serviceCandidate/{id}` | Partial update | `ServiceCandidate_Update` | `ServiceCandidate` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| DELETE | `/serviceCandidate/{id}` | Delete candidate | Path ID | None | 204, 400, 401, 403, 404, 405, 409, 500 |
+| Field Name | Type | Description | Constraints |
+| :--- | :--- | :--- | :--- |
+| id | String | Identifier of the export job | Primary Key |
+| href | String | Reference of the export job | - |
+| completionDate | OffsetDateTime | Date at which the job was completed | - |
+| contentType | String | Format of the exported data | - |
+| creationDate | OffsetDateTime | Date at which the job was created | - |
+| errorLog | String | Reason for failure | - |
+| path | String | URL of root resource source | - |
+| query | String | Scoping for exported data | - |
+| url | String | URL of the file containing exported data | - |
+| status | String | Status (not started, running, succeeded, failed) | - |
 
-### Service Specification Management
-| Method | Path | Purpose | Request Model | Response Model | Status Codes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| GET | `/serviceSpecification` | List specifications | Query params | `ServiceSpecification[]` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| POST | `/serviceSpecification` | Create specification | `ServiceSpecification_Create` | `ServiceSpecification` | 201, 400, 401, 403, 405, 409, 500 |
-| GET | `/serviceSpecification/{id}` | Retrieve by ID | Path ID | `ServiceSpecification` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| PATCH | `/serviceSpecification/{id}` | Partial update | `ServiceSpecification_Update` | `ServiceSpecification` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| DELETE | `/serviceSpecification/{id}` | Delete specification | Path ID | None | 204, 400, 401, 403, 404, 405, 409, 500 |
+## 4.3 Inheritance Hierarchy
 
-### Job Management (Import/Export)
-| Method | Path | Purpose | Request Model | Response Model | Status Codes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| GET | `/importJob` | List import jobs | Query params | `ImportJob[]` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| POST | `/importJob` | Create import job | `ImportJob_Create` | `ImportJob` | 201, 400, 401, 403, 405, 409, 500 |
-| GET | `/importJob/{id}` | Retrieve import job | Path ID | `ImportJob` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| DELETE | `/importJob/{id}` | Delete import job | Path ID | None | 204, 400, 401, 403, 404, 405, 409, 500 |
-| GET | `/exportJob` | List export jobs | Query params | `ExportJob[]` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| POST | `/exportJob` | Create export job | `ExportJob_Create` | `ExportJob` | 201, 400, 401, 403, 405, 409, 500 |
-| GET | `/exportJob/{id}` | Retrieve export job | Path ID | `ExportJob` | 200, 400, 401, 403, 404, 405, 409, 500 |
-| DELETE | `/exportJob/{id}` | Delete export job | Path ID | None | 204, 400, 401, 403, 404, 405, 409, 500 |
+The system utilizes a layered inheritance model for entities to ensure consistency in metadata and auditability:
 
-### Event Subscription (Hub)
-| Method | Path | Purpose | Request Model | Response Model | Status Codes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| POST | `/hub` | Register listener | `EventSubscriptionInput` | `EventSubscription` | 201, 400, 401, 403, 404, 405, 409, 500 |
-| DELETE | `/hub/{id}` | Unregister listener | Path ID | None | 204, 400, 401, 403, 404, 405, 500 |
+1. **BaseEntity**: The root base class providing polymorphism support via `@baseType` and `@type` fields.
+2. **TenantEntity**: (Inherited by main business entities) Provides multi-tenancy context.
+3. **TrackableBaseEntity**: Extends `BaseResource` to provide audit fields:
+    - `createdDate`, `updatedDate`
+    - `createdBy`, `updatedBy`
+    - `revision` (Version field for optimistic locking)
 
-## 7. Domain and Data Design
+**Hierarchy Map:**
+`BaseEntity` $\rightarrow$ `TenantEntity` $\rightarrow$ (`ServiceCatalog`, `ServiceCategory`, `ServiceCandidate`, `ServiceSpecification`)
 
-### Main Domain Entities
-- **ServiceCatalog**: Root entity. Contains name, description, version, and associated categories. (Evidence: Swagger schema)
-- **ServiceCategory**: Logical container for grouping candidates. Supports hierarchical structures via `parentId`. (Evidence: Swagger schema)
-- **ServiceCandidate**: Entity that makes a `ServiceSpecification` available to a catalog. (Evidence: Swagger schema)
-- **ServiceSpecification**: Template for services, including characteristics, features, and resource specifications. (Evidence: Swagger schema)
-- **ImportJob / ExportJob**: Task entities for bulk data movement. (Evidence: Swagger schema)
+## 4.4 Validation Rules
 
-### Identifiers and Attributes
-- **Identifiers**: All primary entities use a string `id` and a hyperlink `href`. (Evidence: Swagger schema `Addressable`)
-- **Lifecycle Status**: Entities use a common set of statuses: `In study`, `In design`, `In test`, `Launched`, `Active`, `Retired`, `Rejected`, `Obsolete`. (Evidence: Swagger schema)
-- **Time Periods**: `validFor` attribute (start/end date) is used across most entities. (Evidence: Swagger schema)
+Validation is implemented through a combination of JSR-303 annotations (e.g., `@Valid`, `@Validated`) and custom business validators located in `com.pia.orbitant.servicecatalog.validator`.
 
-### Relationships
-- **Catalog $\rightarrow$ Category**: A catalog has a list of associated categories.
-- **Category $\rightarrow$ Category**: Self-referencing relationship via `parentId` for nesting.
-- **Category $\rightarrow$ Candidate**: Categories contain lists of `ServiceCandidateRef`.
-- **Candidate $\rightarrow$ Specification**: Each candidate implies one `ServiceSpecificationRef`.
-- **Specification $\rightarrow$ Specification**: Relationships defined via `ServiceSpecRelationship` (dependency, substitution, exclusivity).
+**Key Validation Rules for ServiceSpecification:**
+- **Entity ID Check**: Verifies the validity of the entity ID before processing.
+- **Date Range Validation**: Ensures `validFor` start and end dates are logically consistent.
+- **Version Matching**: Validates that previous versions match for POST operations.
+- **Lifecycle State**: Ensures the entity is in a valid state for the requested operation.
+- **Creation Validation**: Applies specific constraints during the initial creation of a specification.
+# 5. Services
 
-### Persistence Considerations
-The system uses MongoDB (via `common-mongo`), suggesting a document-oriented storage model where entities and their nested characteristics/features are stored as JSON-like documents. (Evidence: pom.xml)
+## 5.1 Service Catalog
+The following business services provide the core logic for managing the Service Catalog lifecycle.
 
-## 8. Interaction and Processing Design
+| Service | Primary Responsibility |
+| :--- | :--- |
+| `ServiceCatalogService` | Manages the overall service catalog entities, including creation, retrieval, and versioning. |
+| `ServiceSpecificationService` | Handles the definition and lifecycle of service specifications. |
+| `ServiceCategoryService` | Manages the categorization of services within the catalog. |
+| `ServiceCandidateService` | Manages service candidates awaiting promotion to the catalog. |
+| `ImportJobService` | Coordinates the import of catalog data via asynchronous jobs. |
+| `ExportJobService` | Coordinates the export of catalog data via asynchronous jobs. |
 
-### Catalog Entity Lifecycle
-- **Trigger**: API call (POST/PATCH/DELETE).
-- **Participating Components**: API Layer $\rightarrow$ Application Layer $\rightarrow$ Persistence Layer.
-- **Sequence**:
-    1. Request received at API endpoint.
-    2. Validation of input against schema.
-    3. Application layer processes business rules.
-    4. Persistence layer updates MongoDB.
-    5. (Optional) Event is published to the Hub.
-- **Outcome**: Entity created/updated/deleted; 200/201/204 response.
+## 5.2 Method-Level Detail
 
-### Batch Import/Export Process
-- **Trigger**: POST to `/importJob` or `/exportJob`.
-- **Sequence**:
-    1. Job created with a target `url` and `path`.
-    2. Job status set to `Not Started` or `Running`.
-    3. System processes the file from/to the specified URL.
-    4. Job status updated to `Succeeded` or `Failed` with an `errorLog` if applicable.
-- **Outcome**: Data imported/exported; Job entity updated.
+### 5.2.1 ServiceCatalogService
+| Method Name | Input Parameters | Output | Purpose |
+| :--- | :--- | :--- | :--- |
+| `createServiceCatalog` | `ServiceCatalogCreate` | `ServiceCatalog` | Creates a new service catalog entry. |
+| `deleteServiceCatalog` | `String id, String version` | `void` | Deletes a specific version of a service catalog. |
+| `listServiceCatalog` | `Clause filter, FindAllAttributesObject attributes` | `Page<ServiceCatalog>` | Retrieves a paginated list of service catalogs. |
+| `patchServiceCatalog` | `String id, String version, ServiceCatalogUpdate` | `ServiceCatalog` | Updates a service catalog using a DTO. |
+| `patchServiceCatalog` | `String id, String version, JsonPatch` | `ServiceCatalog` | Updates a service catalog using JSON Patch. |
+| `retrieveServiceCatalog` | `String id, String version` | `ServiceCatalog` | Retrieves a specific version of a service catalog. |
 
-### Event Notification Flow
-- **Trigger**: Change in a catalog entity (e.g., `ServiceCatalogCreateEvent`).
-- **Sequence**:
-    1. Entity change occurs.
-    2. System identifies registered listeners via the Hub.
-    3. Notification payload is sent to the registered `callback` URL.
-- **Outcome**: External listener notified of the change.
+### 5.2.2 ServiceSpecificationService
+| Method Name | Input Parameters | Output | Purpose |
+| :--- | :--- | :--- | :--- |
+| `createServiceSpecification` | `ServiceSpecificationCreate` | `ServiceSpecification` | Creates a new service specification. |
+| `deleteServiceSpecification` | `String id, String version` | `void` | Deletes a specific version of a service specification. |
+| `listServiceSpecification` | `Clause filter, FindAllAttributesObject attributes` | `Page<ServiceSpecification>` | Retrieves a paginated list of specifications. |
+| `patchServiceSpecification` | `String id, String version, ServiceSpecificationUpdate` | `ServiceSpecification` | Updates a specification using a DTO. |
+| `jsonPatchServiceSpecification` | `String id, String version, JsonPatch` | `ServiceSpecification` | Updates a specification using JSON Patch. |
+| `retrieveServiceSpecification` | `String id, String version` | `ServiceSpecification` | Retrieves a specific version of a specification. |
 
-## 9. Integration Design
+## 5.3 Business Logic Workflows
 
-| System/Dependency | Direction | Purpose | Protocol | Data Exchanged |
+### 5.3.1 Service Specification Creation
+1. **Validation**: The `BusinessValidationService` validates the `ServiceSpecificationCreate` DTO annotations.
+2. **Tenancy Check**: `AccessPolicyService` verifies administrative tenancy.
+3. **Entity Mapping**: A new `ServiceSpecification` entity is created and populated from the DTO.
+4. **Owner Assignment**: `BaseValidation` ensures an owner is assigned if missing.
+5. **Post-Validation**: The entity is validated again using `validateEntityOnPost`.
+6. **Security**: An access policy constraint is generated and assigned to the entity.
+7. **Persistence**: The entity is saved to the repository.
+8. **Eventing**: A creation event is published via `EventService`.
+
+### 5.3.2 Versioning and Patching
+1. **Retrieval**: The existing entity is retrieved using `VersioningService.getEntity` based on `id` and `version`.
+2. **Patch Application**: The `Patcher` component applies either a DTO update or a `JsonPatch` to the existing entity.
+3. **State Preservation**: Access policy constraints and the `latestVersion` flag are preserved from the original entity.
+4. **Validation**: The patched entity is validated via `businessValidationService.validateEntityOnPatch`.
+5. **Version Update**: `VersioningService.patchEntity` handles the creation of a new version in the repository.
+6. **Eventing**: A change event is published.
+
+### 5.3.3 Import/Export Job Management
+1. **Pre-Check**: `ImportExportValidationUtil` performs a pre-check on the request.
+2. **ID Generation**: Uses the provided ID or generates a new UUID.
+3. **Job Initialization**: A job entity is created with a status of "Not Started" and persisted.
+4. **Asynchronous Execution**: The `ImportExportJobRunner` is triggered to start the actual data processing in the background.
+
+## 5.4 Cross-Cutting Concerns
+
+### 5.4.1 Validation (`BusinessValidationService`)
+Services utilize `BusinessValidationService` at multiple stages:
+- **DTO Validation**: `validateAnnotations` and `validateDtoOnPatch` ensure incoming requests are well-formed.
+- **Entity Validation**: `validateEntityOnPost`, `validateEntityOnPatch`, and `validateEntityOnDelete` ensure business rules are maintained before persistence.
+
+### 5.4.2 Authorization (`AccessPolicyService`)
+Authorization is integrated via:
+- **Tenancy Verification**: `checkAdminTenancyAndReturnToken` is used during creation to ensure the user has rights to the tenant.
+- **Access Constraints**: `createAccessPolicyConstraint` is called to bind the entity to specific access rules.
+- **Retrieval Check**: `validateTenancy` is called during `retrieve` operations to ensure the requester has access to the entity.
+
+### 5.4.3 Event Publishing (`EventService`)
+Every state-changing operation triggers an event:
+- **Lifecycle Events**: Creation, deletion, and updates trigger specific events (e.g., `createServiceSpecificationCreateEvent`).
+- **Read Events**: List and retrieve operations publish events for auditing or synchronization.
+- **Transaction Sync**: In `ServiceSpecificationServiceImpl`, events are registered to be published specifically after the transaction commits using `TransactionSynchronizationManager`.
+# 6. API Design
+
+## 6.1 API Overview
+The Service Catalog Management API is implemented following the REST (Representational State Transfer) architectural style. It provides a standardized interface for managing the lifecycle of service catalog elements, including categories, specifications, and candidates.
+
+- **API Style**: REST
+- **Base URL**: `/` (The application is hosted at the root context, with specific resource paths defined in the controllers)
+- **Authentication**: The system integrates with Keycloak for identity and access management (IAM), as inferred from the technology stack. Standard Bearer token authentication is used for securing endpoints.
+- **Data Format**: All requests and responses use `application/json;charset=utf-8`.
+
+## 6.2 Endpoint Mapping Table
+
+### Service Catalog API (`ServiceCatalogApiController`)
+| Endpoint Path | Method | Request Body/Params | Response | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| MongoDB | Outbound | Data Persistence | MongoDB Wire Protocol | Catalog Entities, Jobs, Subscriptions |
-| ID Generator | Outbound | Unique ID creation | Internal Library | ID Requests $\rightarrow$ Unique Strings |
-| Access Control | Outbound | Authorization | Internal Library | Permission checks |
-| Event Listeners | Outbound | Notifications | HTTP/REST | Event Payloads (JSON) |
-| Kafka | Outbound | Event Streaming | Kafka Protocol | Event notifications (Inferred from testcontainers) |
+| `/serviceCatalog` | POST | `ServiceCatalogCreate` | `ServiceCatalog` (201) | Creates a new Service Catalog entity. |
+| `/serviceCatalog/{id}` | DELETE | `id` (Path), `version` (Query) | Void (204) | Deletes a Service Catalog entity. |
+| `/serviceCatalog` | GET | `fields`, `offset`, `limit`, `sort` (Query) | `List<ServiceCatalog>` (200) | Lists or finds Service Catalog entities. |
+| `/serviceCatalog/{id}` | PATCH | `id` (Path), `ServiceCatalogUpdate` (Body), `version` (Query) | `ServiceCatalog` (200) | Partially updates a Service Catalog entity via merge-patch. |
+| `/serviceCatalog/{id}` | PATCH | `id` (Path), `JsonPatch` (Body), `version` (Query) | `ServiceCatalog` (200) | Partially updates a Service Catalog entity via JSON Patch. |
+| `/serviceCatalog/{id}` | GET | `id` (Path), `fields` (Query), `version` (Query) | `ServiceCatalog` (200) | Retrieves a Service Catalog entity by ID. |
 
-## 10. Error Handling Design
+### Service Specification API (`ServiceSpecificationApiController`)
+| Endpoint Path | Method | Request Body/Params | Response | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `/serviceSpecification` | POST | `ServiceSpecificationCreate` | `ServiceSpecification` (201) | Creates a new Service Specification entity. |
+| `/serviceSpecification/{id}` | DELETE | `id` (Path), `version` (Query) | Void (204) | Deletes a Service Specification entity. |
+| `/serviceSpecification` | GET | `fields`, `offset`, `limit`, `sort` (Query) | `List<ServiceSpecification>` (200) | Lists or finds Service Specification entities. |
+| `/serviceSpecification/{id}` | PATCH | `id` (Path), `ServiceSpecificationUpdate` (Body), `version` (Query) | `ServiceSpecification` (200) | Partially updates a Service Specification entity via merge-patch. |
+| `/serviceSpecification/{id}` | PATCH | `id` (Path), `JsonPatch` (Body), `version` (Query) | `ServiceSpecification` (200) | Partially updates a Service Specification entity via JSON Patch. |
+| `/serviceSpecification/{id}` | GET | `id` (Path), `fields` (Query), `version` (Query) | `ServiceSpecification` (200) | Retrieves a Service Specification entity by ID. |
 
-### Error Response Structure
-Errors are returned as an `Error` object containing:
-- `code`: Application relevant detail.
-- `reason`: Explanation for the user.
-- `message`: Corrective actions.
-- `status`: HTTP Error code extension.
-- `referenceError`: URI to documentation. (Evidence: Swagger schema `Error`)
+### Service Category API (`ServiceCategoryApiController`)
+| Endpoint Path | Method | Request Body/Params | Response | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `/serviceCategory` | POST | `ServiceCategoryCreate` | `ServiceCategory` (201) | Creates a new Service Category entity. |
+| `/serviceCategory/{id}` | DELETE | `id` (Path), `version` (Query) | Void (204) | Deletes a Service Category entity. |
+| `/serviceCategory` | GET | `fields`, `offset`, `limit`, `sort` (Query) | `List<ServiceCategory>` (200) | Lists or finds Service Category entities. |
+| `/serviceCategory/{id}` | PATCH | `id` (Path), `ServiceCategoryUpdate` (Body), `version` (Query) | `ServiceCategory` (200) | Partially updates a Service Category entity via merge-patch. |
+| `/serviceCategory/{id}` | PATCH | `id` (Path), `JsonPatch` (Body), `version` (Query) | `ServiceCategory` (200) | Partially updates a Service Category entity via JSON Patch. |
+| `/serviceCategory/{id}` | GET | `id` (Path), `fields` (Query), `version` (Query) | `ServiceCategory` (200) | Retrieves a Service Category entity by ID. |
 
-### Condition Mapping
-- **Validation Failures**: 400 Bad Request.
-- **Resource Not Found**: 404 Not Found.
-- **Conflict**: 409 Conflict (e.g., duplicate ID).
-- **Auth Failures**: 401 Unauthorized / 403 Forbidden.
-- **Internal Failures**: 500 Internal Server Error.
+### Service Candidate API (`ServiceCandidateApiController`)
+| Endpoint Path | Method | Request Body/Params | Response | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `/serviceCandidate` | POST | `ServiceCandidateCreate` | `ServiceCandidate` (201) | Creates a new Service Candidate entity. |
+| `/serviceCandidate/{id}` | DELETE | `id` (Path), `version` (Query) | Void (204) | Deletes a Service Candidate entity. |
+| `/serviceCandidate` | GET | `fields`, `offset`, `limit`, `sort` (Query) | `List<ServiceCandidate>` (200) | Lists or finds Service Candidate entities. |
+| `/serviceCandidate/{id}` | PATCH | `id` (Path), `ServiceCandidateUpdate` (Body), `version` (Query) | `ServiceCandidate` (200) | Partially updates a Service Candidate entity via merge-patch. |
+| `/serviceCandidate/{id}` | PATCH | `id` (Path), `JsonPatch` (Body), `version` (Query) | `ServiceCandidate` (200) | Partially updates a Service Candidate entity via JSON Patch. |
+| `/serviceCandidate/{id}` | GET | `id` (Path), `fields` (Query), `version` (Query) | `ServiceCandidate` (200) | Retrieves a Service Candidate entity by ID. |
 
-## 11. Security Design
+### Hub API (`HubApiController`)
+| Endpoint Path | Method | Request Body/Params | Response | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `/hub` | POST | `EventSubscriptionInput` | `EventSubscription` (201) | Registers a listener for event notifications. |
+| `/hub/{id}` | DELETE | `id` (Path) | Void (204) | Unregisters a listener. |
 
-- **Authentication**: Not explicitly detailed in the API spec, but `pom.xml` includes `access-control` and `testcontainers-keycloak`, implying an OAuth2/OpenID Connect integration.
-- **Authorization**: Managed via the `access-control` library. (Evidence: pom.xml)
-- **Input Validation**: Handled via schema validation files located in `src/main/resources/static/schemas`. (Evidence: Component README)
-- **Data Protection**: Not evidenced in the supplied sources.
+### Import Job API (`ImportJobApiController`)
+| Endpoint Path | Method | Request Body/Params | Response | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `/importJob` | POST | `ImportJobCreate` | `ImportJob` (201) | Creates a new Import Job entity. |
+| `/importJob/{id}` | DELETE | `id` (Path) | Void (204) | Deletes an Import Job entity. |
+| `/importJob` | GET | `fields`, `offset`, `limit`, `sort` (Query) | `List<ImportJob>` (200) | Lists or finds Import Job entities. |
+| `/importJob/{id}` | GET | `id` (Path), `fields` (Query) | `ImportJob` (200) | Retrieves an Import Job entity by ID. |
 
-## 12. Configuration Design
+### Export Job API (`ExportJobApiController`)
+| Endpoint Path | Method | Request Body/Params | Response | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `/exportJob` | POST | `ExportJobCreate` | `ExportJob` (201) | Creates a new Export Job entity. |
+| `/exportJob/{id}` | DELETE | `id` (Path) | Void (204) | Deletes an Export Job entity. |
+| `/exportJob` | GET | `fields`, `offset`, `limit`, `sort` (Query) | `List<ExportJob>` (200) | Lists or finds Export Job entities. |
+| `/exportJob/{id}` | GET | `id` (Path), `fields` (Query) | `ExportJob` (200) | Retrieves an Export Job entity by ID. |
 
-### Application Properties
-- **Service Port**: 8083 (Evidence: Component README)
-- **Service Short Name**: SC (Evidence: Component README)
-- **API Base Path**: `/tmf-api/serviceCatalogManagement/v4/` (Evidence: Swagger OpenAPI)
-- **Camunda URL**: Optional configuration available. (Evidence: Component README)
+## 6.3 Request/Response Models
+The API utilizes Data Transfer Objects (DTOs) to separate the internal domain model from the external API contract. Key models include:
 
-### Build Configuration
-- **Java Version**: 17 (Evidence: pom.xml)
-- **Packaging**: JAR (Evidence: pom.xml)
+| Model | Type | Description |
+| :--- | :--- | :--- |
+| `ServiceCatalogCreate` / `ServiceCatalogUpdate` | Request | DTOs for creating and updating Service Catalog elements. |
+| `ServiceSpecificationCreate` / `ServiceSpecificationUpdate` | Request | DTOs for creating and updating Service Specifications. |
+| `ServiceCategoryCreate` / `ServiceCategoryUpdate` | Request | DTOs for creating and updating Service Categories. |
+| `ServiceCandidateCreate` / `ServiceCandidateUpdate` | Request | DTOs for creating and updating Service Candidates. |
+| `ImportJobCreate` | Request | DTO for initiating a data import job. |
+| `ExportJobCreate` | Request | DTO for initiating a data export job. |
+| `EventSubscriptionInput` | Request | DTO for registering event listener callback endpoints. |
+| `ServiceCatalog` / `ServiceSpecification` / etc. | Response | Domain entities returned as JSON responses. |
 
-## 13. Build and Dependency Design
+## 6.4 Error Handling
+The API implements a global error handling mechanism utilizing `OrbitantException` and a standard `Error` response model. When an error occurs, the system returns a consistent JSON error object containing a descriptive message and the corresponding HTTP status code.
 
-- **Build System**: Maven 3. (Evidence: README)
-- **Framework**: Spring Boot 3.5.15. (Evidence: pom.xml)
-- **Major Libraries**:
-    - `common-mongo`: MongoDB integration.
-    - `id-generator`: Unique identifier management.
-    - `access-control`: Security and permissions.
-    - `QueryDSL`: For type-safe querying.
-- **Testing**:
-    - JUnit 5 (via `spring-boot-starter-test`).
-    - Testcontainers for MongoDB, Kafka, and Keycloak.
-    - Postman CTK tests (located in `src/main/resources/ctk`). (Evidence: Component README)
+### Standard Error Response Codes
+| Status Code | Meaning | Description |
+| :--- | :--- | :--- |
+| 400 | Bad Request | The request is malformed or fails validation. |
+| 401 | Unauthorized | Authentication is required or has failed. |
+| 403 | Forbidden | The authenticated user lacks the necessary permissions. |
+| 404 | Not Found | The requested resource could not be found. |
+| 405 | Method Not Allowed | The HTTP method is not supported for this endpoint. |
+| 409 | Conflict | The request conflicts with the current state of the resource. |
+| 500 | Internal Server Error | An unexpected server-side error occurred. |
 
-## 14. Persistence Design
+## 6.5 Versioning Strategy
+The API currently employs a versioning strategy that allows for resource-specific versioning via query parameters.
+- **Query Parameter Versioning**: The `version` query parameter is used in `GET`, `PATCH`, and `DELETE` operations (e.g., `/serviceCatalog/{id}?version=1.0`) to allow clients to interact with specific versions of a resource.
+- **URL Versioning**: While the current controllers do not show a global version prefix in `@RequestMapping`, the underlying Swagger definitions (e.g., `TMF633-Service-Catalog-v4.0.0-swagger.json`) indicate alignment with TMF (TeleManagement Forum) versioned standards.
+# 7. Database
 
-- **Technology**: MongoDB. (Evidence: pom.xml)
-- **Responsibilities**: Storage of the service catalog hierarchy, specifications, and job history.
-- **Consistency**: Not evidenced in the supplied sources.
-- **Details**: Specific collection names and indexes are not evidenced.
+## 7.1 Database Overview
+The system utilizes **MongoDB**, a document-oriented NoSQL database. This choice supports a flexible, schema-less data model, which is essential for managing service catalog elements that may have varying attributes and complex nested structures (e.g., characteristics and bundled specifications). The data model follows a document-oriented approach, allowing related data to be stored together in single documents to optimize read performance and simplify the representation of hierarchical relationships.
 
-## 15. Event and Notification Design
+## 7.2 Collection Mapping
 
-- **Subscription Mechanism**: Clients register a callback URL via the `/hub` endpoint. (Evidence: Swagger OpenAPI)
-- **Event Types**:
-    - `ServiceCatalogCreateEvent`, `ServiceCatalogChangeEvent`, `ServiceCatalogDeleteEvent`, `ServiceCatalogBatchEvent`.
-    - Similar events exist for `ServiceCategory`, `ServiceCandidate`, and `ServiceSpecification`. (Evidence: Swagger OpenAPI)
-- **Payload**: Each event contains a header (eventId, eventTime, eventType, correlationId, domain, title, description, priority) and a specific payload containing the involved resource. (Evidence: Swagger schema)
+| MongoDB Collection | Java Entity | Primary Purpose |
+| :--- | :--- | :--- |
+| `serviceSpecification` | `ServiceSpecification` | Stores definitions of services, including characteristics and relationships. |
+| `serviceCategory` | `ServiceCategory` | Manages the categorization of services for catalog organization. |
+| `serviceCatalog` | `ServiceCatalog` | Defines specific service catalogs and their associated categories. |
+| `serviceCandidate` | `ServiceCandidate` | Tracks service specifications that are candidates for publication in catalogs. |
+| `importJob` | `ImportJob` | Maintains state and logs for data import operations. |
+| `exportJob` | `ExportJob` | Maintains state and logs for data export operations. |
+| `entitySpecification` | `EntitySpecification` | Defines generic templates for bespoke business entities. |
+| `entitySpecificationRelationship` | `EntitySpecificationRelationship` | Stores relationships (migration, dependency, etc.) between entity specifications. |
 
-## 16. Observability and Operations
+## 7.3 Indexing Strategy
+The system relies primarily on the primary key index provided by MongoDB (`_id`). Specialized queries are handled via Spring Data MongoDB `@Query` annotations in the repositories, targeting:
+- **Relationship lookups**: Indices on `serviceSpecRelationship.id` and `serviceSpecRelationship.version` in `ServiceSpecificationRepository`.
+- **Candidate lookups**: Indices on `serviceSpecification.id` and `serviceSpecification.version` in `ServiceCandidateRepository`.
+- **Category lookups**: Indices on `serviceCandidate.id` and `serviceCandidate.version` in `ServiceCategoryRepository`.
 
-- **Logging**: Not explicitly detailed, but standard Spring Boot logging is inferred.
-- **Metrics/Health**: The `/hub` registration description mentions delivering information about "health state, execution state, failures and metrics." (Evidence: Swagger OpenAPI)
-- **Diagnostics**: Open design item; no specific diagnostic endpoints evidenced.
+## 7.4 Transaction Management
+Transaction management is handled via Spring's `@Transactional` abstraction. Given MongoDB's nature, consistency is managed at the document level. For operations spanning multiple collections, the system utilizes MongoDB multi-document transactions (where supported by the deployment) to ensure atomicity, particularly during complex import/export jobs.
 
-## 17. Performance and Scalability Considerations
+## 7.5 Data Versioning and Auditing
+The system implements a robust versioning and auditing mechanism:
+- **Versioning**: Entities extend `VersionEntity` (via `BaseResource`), implementing a versioning strategy that tracks revisions. Repositories extend `VersioningRepositoryForName`, enabling the retrieval of specific versions or the latest active version of a resource.
+- **Auditing**: 
+    - `lastUpdate`: Tracked in `BaseResource` and `EntitySpecification` to store the date and time of the last modification.
+    - **Lifecycle Tracking**: The `lifecycleStatus` field (e.g., `IN_STUDY`) is used to track the state of the entity throughout its lifecycle.
+    - **Timestamps**: `BaseResource.setUpdateDefaults()` ensures the `lastUpdate` field is refreshed on every update operation.
+# 8. Configuration
 
-- **Pagination**: API supports `offset` and `limit` parameters for list operations to handle large datasets. (Evidence: Swagger OpenAPI)
-- **Field Selection**: Supports a `fields` query parameter to reduce payload size by returning only requested attributes. (Evidence: Swagger OpenAPI)
-- **Numerical Targets**: Not evidenced in the supplied sources.
+## 8.1 Configuration Overview
+The Service Catalog Management application uses a Spring Boot-based configuration mechanism. The primary configuration is defined in `src/main/resources/application.yml`. The application utilizes a combination of hardcoded defaults and environment variable placeholders (e.g., `${SPRING_KAFKA_BOOTSTRAP_SERVERS}`), allowing for flexible deployment across different environments.
 
-## 18. Reliability and Resilience Considerations
+## 8.2 Key Configuration Parameters
 
-- **Job Tracking**: Import/Export processes are asynchronous, tracked via Job entities with status updates (`Running`, `Succeeded`, `Failed`). (Evidence: Swagger OpenAPI)
-- **Error Logs**: Jobs capture failure reasons in an `errorLog` attribute. (Evidence: Swagger schema)
-- **Timeouts/Retries**: Not evidenced in the supplied sources.
+| Parameter | Description | Default/Example Value |
+| :--- | :--- | :--- |
+| `SERVER_PORT` | The port on which the server listens | `8083` |
+| `SERVER_SERVLET_CONTEXT_PATH` | Base URI path for the API | `/api/serviceCatalogManagement/v4/` |
+| `SPRING_DATA_MONGODB_INET_ADDRESS` | Connection URI for MongoDB | `mongodb://mongodb:27017` |
+| `SPRING_DATA_MONGODB_DATABASE` | Name of the MongoDB database | `service_catalog` |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka cluster bootstrap servers | `http://kafka:9092` |
+| `SECURITY_JWK_SET_URI` | Keycloak JWK set URI for token validation | `https://dnext.dev.orbitant.dev/realms/.../certs` |
+| `APPLICATION_S2S_AUTH_URL` | S2S authentication token endpoint | `https://dnext.dev.orbitant.dev/realms/.../token` |
+| `APPLICATION_S2S_CLIENT_ID` | Client ID for S2S authentication | `orbitant-backend-client` |
+| `ACCESS_CONTROL_API_URL` | API URL for roles and permissions management | `http://dnext-drapms-roles-userpermissions-mgmt-srvc/...` |
+| `CONFIGURED_VALUE_SERVICE_URL` | URL for dynamic configuration service | `http://dnext-dcfms-configuration-mgmt-srvc/...` |
 
-## 19. Deployment View
+## 8.3 Environment Profiles
+The application is designed to support multiple profiles. While a single `application.yml` is provided with "dev-boxes" configurations, the use of environment variables indicates a pattern for `dev`, `test`, and `prod` profiles.
+- **Dev**: Uses local/dev cluster addresses (e.g., `mongodb:27017`, `kafka:9092`).
+- **Test/Prod**: Overridden via environment variables in the deployment pipeline (Jenkins).
 
-- **Deployable Unit**: Spring Boot executable JAR. (Evidence: pom.xml)
-- **Runtime Framework**: Spring Boot 3.5.15. (Evidence: pom.xml)
-- **Required Runtime Dependencies**:
-    - JDK 17.
-    - MongoDB instance.
-    - Kafka cluster (inferred from test dependencies).
-    - Keycloak instance (inferred from test dependencies).
+## 8.4 Secret Management
+Sensitive data is managed through the following mechanisms:
+- **Environment Variables**: Secrets such as `SPRING_DATA_MONGODB_PASSWORD` and `APPLICATION_S2S_CLIENT_SECRET` are externalized as environment variables to avoid committing them to source control.
+- **Password Protection**: `SPRING_DATA_MONGODB_PASSWORD_PROTECTION_ENABLED` is set to `true` to enable additional security for database credentials.
+- **Log Obfuscation**: The `logbook` configuration explicitly obfuscates sensitive headers (`Authorization`, `X-Secret`) and parameters (`access_token`, `password`) in the logs.
 
-## 20. Design Decisions
+## 8.5 Dynamic Configuration
+The application supports dynamic configuration through the `configured-value` mechanism:
+- **Dynamic Service**: Integration with `dnext-dcfms-configuration-mgmt-srvc` via `CONFIGURED_VALUE_SERVICE_URL`.
+- **Refresh Mechanism**: A refresh interval is defined (`configured-value.refresh: 3600000` ms), allowing the application to update specific settings (e.g., `lifecycleStatus`, `jobStateType`) without a restart.
+# 9. Testing
 
-| ID | Decision | Context | Rationale | Consequences | Evidence Status |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| ADR-001 | TMF633 Compliance | Need for industry-standard catalog management. | Interoperability with other telecom/service systems. | API structure follows TM Forum standards. | Evidenced (Swagger) |
-| ADR-002 | Document-based Persistence | Complex, nested specifications and characteristics. | MongoDB allows flexible schemas for varying service specs. | Use of `common-mongo` library. | Inferred (pom.xml) |
-| ADR-003 | Asynchronous Batch Jobs | Large data imports/exports can be slow. | Prevent API timeouts and provide tracking. | Implementation of `ImportJob` and `ExportJob` entities. | Evidenced (Swagger) |
+## 9.1 Testing Strategy
+The project employs a multi-level testing strategy to ensure the reliability and correctness of the Service Catalog Management API:
+- **Unit Testing**: Focused on individual components, validators, and utility classes to verify business logic in isolation.
+- **Integration Testing**: Validates the interaction between the application and its external dependencies (MongoDB, Kafka, Keycloak) using a real-world infrastructure simulation.
+- **API/End-to-End Testing**: Uses `MockMvc` and `TestRestTemplate` to verify REST endpoints, request/response payloads, and overall system behavior from the client perspective.
 
-## 21. Risks, Gaps, and Open Design Questions
+## 9.2 Test Frameworks
+The following frameworks and libraries are utilized for testing:
+- **JUnit 5 (Jupiter)**: Primary testing framework for writing and executing tests.
+- **Spring Boot Test**: Provides integration testing support, including `@SpringBootTest` and `@AutoConfigureMockMvc`.
+- **Mockito**: Used for mocking dependencies and simulating object behavior.
+- **Testcontainers**: Used to manage ephemeral Docker containers for external dependencies.
+- **JaCoCo**: Integrated via Maven plugin for measuring code coverage.
 
-- **Security Implementation**: While `access-control` and `keycloak` are present in `pom.xml`, the specific permission mapping and authentication flow are not detailed.
-- **Integration Contracts**: The exact Kafka topic structure and message formats are not evidenced.
-- **Business Rules**: The "creation rules" and "updating rules" mentioned in the README are not detailed in the API specification.
-- **Operational Requirements**: No evidence of specific SLAs, backup strategies, or monitoring dashboards.
-- **Persistence Details**: Actual MongoDB collection names and indexing strategies require source-code analysis.
+## 9.3 Test Case Analysis
+The test suite is organized into several key areas:
+- **Controller Tests**: (e.g., `ServiceCatalogControllerTest`, `ServiceCategoryControllerTest`, `ServiceSpecificationControllerTest`) Verify REST API contracts, HTTP status codes, and JSON responses.
+- **Service & Validator Tests**: (e.g., `ServiceCatalogLCStateForPatchValidatorTest`, `ServiceCatalogAclRelatedPartyTest`) Ensure business rules, lifecycle state transitions, and access control logic are correctly implemented.
+- **Security & Tenant Tests**: (e.g., `ServiceCatalogTenantIdControllerTest`, `ServiceCatalogControllerOrganizationIdTest`) Verify that data is correctly partitioned by tenant and organization IDs.
+- **Event Testing**: (`EventListenerTest`) Validates the processing of asynchronous events.
+- **Multi-Organization Tests**: (e.g., `ServiceSpecificationMultiOrganizationIdTest`) Ensures correct behavior across multiple organizations.
+
+## 9.4 Integration Testing Approach
+External dependencies are simulated using **Testcontainers** to provide a consistent and isolated environment:
+- **MongoDB**: A `MongoDBContainer` is used to run a real MongoDB instance, ensuring data access layers are tested against actual database behavior.
+- **Kafka**: A `KafkaContainer` is utilized to verify event production and consumption.
+- **Keycloak**: A `KeycloakContainer` is employed to simulate the Identity and Access Management (IAM) provider, including the import of a predefined realm (`orbitant-realm.json`) for authentication and authorization tests.
+- **Dynamic Configuration**: The `AbstractTestBase` class uses `@DynamicPropertySource` to inject the dynamically assigned ports and URLs from these containers into the Spring application properties.
+
+## 9.5 Test Coverage
+Code coverage is managed using the **JaCoCo Maven Plugin**. To ensure meaningful metrics, certain layers are excluded from coverage reports:
+- Domain models (`**/data/**`)
+- Entities (`**/entity/**`)
+- Data migration logic (`**/migration/**`)
