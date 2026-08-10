@@ -1,0 +1,38 @@
+{
+  "project_name": "Service Catalog Management",
+  "purpose": "The Service Catalog Management API allows the management of the entire lifecycle of the service catalog elements.",
+  "technology_stack": {
+    "language": "Java 17",
+    "framework": "Spring Boot 3.5.15",
+    "build_tool": "Maven 3",
+    "database": "MongoDB (inferred from com.pia.orbitant:common-mongo and testcontainers-mongodb)",
+    "messaging": "Kafka (inferred from testcontainers-kafka)",
+    "other": [
+      "QueryDSL (apt-maven-plugin)",
+      "Keycloak (testcontainers-keycloak)",
+      "Camunda (referenced in README)"
+    ]
+  },
+  "structural_overview": {
+    "root_directory": ".runner-work/component-source",
+    "source_directory": "src/main/java",
+    "package_organization": {
+      "com.pia.orbitant.servicecatalog": "Root package",
+      "com.pia.orbitant.servicecatalog.api": "REST API controllers and request DTOs",
+      "com.pia.orbitant.servicecatalog.service": "Business logic interfaces and implementations",
+      "com.pia.orbitant.servicecatalog.repository": "Data access layer (repositories)",
+      "com.pia.orbitant.servicecatalog.data": "Domain models and data entities",
+      "com.pia.orbitant.servicecatalog.event": "Event-driven architecture components (events and payloads)",
+      "com.pia.orbitant.servicecatalog.migration": "Data migration logic"
+    }
+  },
+  "key_entry_points": [
+    "/home/runner/work/n8n/n8n/workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/component-source/src/main/java/com/pia/orbitant/servicecatalog/ServiceCatalogApplication.java"
+  ],
+  "configuration_files": [
+    "/home/runner/work/n8n/n8n/workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/component-source/pom.xml",
+    "/home/runner/work/n8n/n8n/workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/component-source/README.md",
+    "/home/runner/work/n8n/n8n/workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/component-source/TMF633-Service-Catalog-v4.0.0-swagger.json",
+    "/home/runner/work/n8n/n8n/workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/component-source/src/main/jenkins/Jenkinsfile"
+  ]
+}
