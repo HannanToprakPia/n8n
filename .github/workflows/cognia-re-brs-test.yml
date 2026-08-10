@@ -615,42 +615,204 @@ jobs:
 
           echo
           echo "BRS generation verified successfully."
+            # =========================================================
+      # 19. NORMALIZE FINAL SDS
+      # =========================================================
+
+      - name: Normalize final SDS document
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE
+        run: |
+          set -euo pipefail
+
+          OUTPUT="$SDS_LOCAL_OUTPUT_PATH"
+          TARGET="$OUTPUT/Reference-SDS.md"
+
+          echo "Looking for consolidated SDS..."
+
+          if [ -s "$OUTPUT/final_sds.md" ]; then
+            cp "$OUTPUT/final_sds.md" "$TARGET"
+          elif [ -s "$OUTPUT/FINAL_SDS.md" ]; then
+            cp "$OUTPUT/FINAL_SDS.md" "$TARGET"
+          elif [ -s "$OUTPUT/Software_Design_Specification.md" ]; then
+            cp "$OUTPUT/Software_Design_Specification.md" "$TARGET"
+          elif [ -s "$OUTPUT/SDS.md" ]; then
+            cp "$OUTPUT/SDS.md" "$TARGET"
+          else
+            echo "No consolidated SDS found. Building from sections."
+
+            : > "$TARGET"
+
+            find "$OUTPUT" \
+              -maxdepth 1 \
+              -type f \
+              \( -iname 'section*.md' -o -iname '[0-9]*.md' \) \
+              -print0 \
+              | sort -zV \
+              | while IFS= read -r -d '' file; do
+                  echo "Adding $file"
+                  cat "$file" >> "$TARGET"
+                  printf '\n\n' >> "$TARGET"
+                done
+          fi
+
+          test -s "$TARGET"
+
+          echo "Canonical SDS:"
+          wc -c "$TARGET"
 
       # =========================================================
-      # 19. UPLOAD SDS ARTIFACT
+      # 20. NORMALIZE FINAL SRS
+      # =========================================================
+
+      - name: Normalize final SRS document
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE
+        run: |
+          set -euo pipefail
+
+          OUTPUT="$SRS_LOCAL_OUTPUT_PATH"
+          TARGET="$OUTPUT/Reference-SRS.md"
+
+          echo "Looking for consolidated SRS..."
+
+          if [ -s "$OUTPUT/final_srs.md" ]; then
+            cp "$OUTPUT/final_srs.md" "$TARGET"
+          elif [ -s "$OUTPUT/FINAL_SRS.md" ]; then
+            cp "$OUTPUT/FINAL_SRS.md" "$TARGET"
+          elif [ -s "$OUTPUT/Software_Requirements_Specification.md" ]; then
+            cp "$OUTPUT/Software_Requirements_Specification.md" "$TARGET"
+          elif [ -s "$OUTPUT/SRS.md" ]; then
+            cp "$OUTPUT/SRS.md" "$TARGET"
+          else
+            echo "No consolidated SRS found. Building from sections."
+
+            : > "$TARGET"
+
+            find "$OUTPUT" \
+              -maxdepth 1 \
+              -type f \
+              -name '*.md' \
+              ! -name 'Reference-SRS.md' \
+              ! -name 'final_srs.md' \
+              ! -name 'FINAL_SRS.md' \
+              -print0 \
+              | sort -zV \
+              | while IFS= read -r -d '' file; do
+                  echo "Adding $file"
+                  cat "$file" >> "$TARGET"
+                  printf '\n\n' >> "$TARGET"
+                done
+          fi
+
+          test -s "$TARGET"
+
+          echo "Canonical SRS:"
+          wc -c "$TARGET"
+
+      # =========================================================
+      # 21. NORMALIZE FINAL BRS
+      # =========================================================
+
+      - name: Normalize final BRS document
+        shell: bash
+        working-directory: workspace/dnext-ai-rnd/Cognia-RE/BRS-RE
+        run: |
+          set -euo pipefail
+
+          OUTPUT="$BRS_LOCAL_OUTPUT_PATH"
+          TARGET="$OUTPUT/Reference-BRS.md"
+
+          echo "Looking for consolidated BRS..."
+
+          if [ -s "$OUTPUT/final_brs.md" ]; then
+            cp "$OUTPUT/final_brs.md" "$TARGET"
+          elif [ -s "$OUTPUT/BRS.md" ]; then
+            cp "$OUTPUT/BRS.md" "$TARGET"
+          elif [ -s "$OUTPUT/FINAL_BRS.md" ]; then
+            cp "$OUTPUT/FINAL_BRS.md" "$TARGET"
+          elif [ -s "$OUTPUT/Business_Requirements_Specification.md" ]; then
+            cp "$OUTPUT/Business_Requirements_Specification.md" "$TARGET"
+          else
+            echo "No consolidated BRS found. Building from sections."
+
+            : > "$TARGET"
+
+            find "$OUTPUT" \
+              -maxdepth 1 \
+              -type f \
+              -name '*.md' \
+              ! -name 'Reference-BRS.md' \
+              ! -name 'final_brs.md' \
+              ! -name 'BRS.md' \
+              -print0 \
+              | sort -zV \
+              | while IFS= read -r -d '' file; do
+                  echo "Adding $file"
+                  cat "$file" >> "$TARGET"
+                  printf '\n\n' >> "$TARGET"
+                done
+          fi
+
+          test -s "$TARGET"
+
+          echo "Canonical BRS:"
+          wc -c "$TARGET"
+
+      # =========================================================
+      # 22. VERIFY CANONICAL DOCUMENTS
+      # =========================================================
+
+      - name: Verify canonical reference documents
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDS_FILE="$SDS_FRAMEWORK_PATH/$SDS_LOCAL_OUTPUT_PATH/Reference-SDS.md"
+          SRS_FILE="$SRS_FRAMEWORK_PATH/$SRS_LOCAL_OUTPUT_PATH/Reference-SRS.md"
+          BRS_FILE="$BRS_FRAMEWORK_PATH/$BRS_LOCAL_OUTPUT_PATH/Reference-BRS.md"
+
+          for file in "$SDS_FILE" "$SRS_FILE" "$BRS_FILE"; do
+            if [ ! -s "$file" ]; then
+              echo "Missing canonical document: $file"
+              exit 1
+            fi
+
+            echo "OK: $file"
+          done
+
+      # =========================================================
+      # 23. UPLOAD SDS
       # =========================================================
 
       - name: Upload SDS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cognia-reference-sds-${{ inputs.component_name }}
-          path: |
-            workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/sds-output/**
+          path: workspace/dnext-ai-rnd/Cognia-RE/SDS-RE/.runner-work/sds-output/**
           if-no-files-found: error
           retention-days: 7
 
       # =========================================================
-      # 20. UPLOAD SRS ARTIFACT
+      # 24. UPLOAD SRS
       # =========================================================
 
       - name: Upload SRS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cognia-reference-srs-${{ inputs.component_name }}
-          path: |
-            workspace/dnext-ai-rnd/Cognia-RE/SRS-RE/.runner-work/srs-output/**
+          path: workspace/dnext-ai-rnd/Cognia-RE/SRS-RE/.runner-work/srs-output/**
           if-no-files-found: error
           retention-days: 7
 
       # =========================================================
-      # 21. UPLOAD BRS ARTIFACT
+      # 25. UPLOAD BRS
       # =========================================================
 
       - name: Upload BRS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cognia-reference-brs-${{ inputs.component_name }}
-          path: |
-            workspace/dnext-ai-rnd/Cognia-RE/BRS-RE/.runner-work/brs-output/**
+          path: workspace/dnext-ai-rnd/Cognia-RE/BRS-RE/.runner-work/brs-output/**
           if-no-files-found: error
           retention-days: 7
