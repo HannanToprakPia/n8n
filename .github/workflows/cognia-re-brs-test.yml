@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 420
 
     env:
-      OLLAMA_MODEL: qwen3-coder
+      OLLAMA_MODEL: gemma4:31b
 
       COMPONENT_CHECKOUT_PATH: workspace/component-source
       COGNIA_REPO_PATH: workspace/dnext-ai-rnd
